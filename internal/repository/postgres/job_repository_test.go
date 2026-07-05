@@ -262,9 +262,7 @@ func (s *PostgresSuite) TestJobRepository_UpdateStatus() {
 			RowsInserted:  10,
 			FileHash:      "abc123",
 		}
-		durationMs := int64(100)
-
-		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, result, nil, &durationMs)
+		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, result, nil, new(int64(100)))
 		require.NoError(t, err, "Failed to update job status")
 
 		// Get the job and verify updates
@@ -303,8 +301,7 @@ func (s *PostgresSuite) TestJobRepository_UpdateStatus() {
 		require.NoError(t, err, "Failed to create job")
 
 		// Update job status to FAILED with error
-		errMsg := "test error"
-		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusFailed, nil, &errMsg, nil)
+		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusFailed, nil, new("test error"), nil)
 		require.NoError(t, err, "Failed to update job status")
 
 		// Get the job and verify updates
@@ -376,10 +373,7 @@ func (s *PostgresSuite) TestJobRepository_UpdateToPending() {
 		require.NoError(t, err, "Failed to update attempts")
 
 		// Requeue the job
-		runAfter := "2025-01-01T00:00:00Z"
-		errMsg := "test error"
-
-		err = repo.UpdateToPending(txCtx, job.ID, &runAfter, &errMsg)
+		err = repo.UpdateToPending(txCtx, job.ID, new("2025-01-01T00:00:00Z"), new("test error"))
 		require.NoError(t, err, "Failed to requeue job")
 
 		// Get the job and verify
@@ -422,8 +416,7 @@ func (s *PostgresSuite) TestJobRepository_GetQueueStats() {
 			job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
 			require.NoError(t, err, "Failed to create job")
 
-			durationMs := int64(100)
-			err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, nil, nil, &durationMs)
+			err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, nil, nil, new(int64(100)))
 			require.NoError(t, err, "Failed to update job status")
 		}
 
@@ -483,8 +476,7 @@ func (s *PostgresSuite) TestJobRepository_GetJobsByStatus() {
 
 			// Mark every other job as completed
 			if i%2 == 0 {
-				durationMs := int64(100)
-				err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, nil, nil, &durationMs)
+				err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, nil, nil, new(int64(100)))
 				require.NoError(t, err, "Failed to update job status")
 			}
 		}
@@ -570,8 +562,7 @@ func (s *PostgresSuite) TestJobRepository_ResultMerging() {
 			RowsInserted: 8,
 			FileHash:     "hash123",
 		}
-		durationMs := int64(200)
-		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, result2, nil, &durationMs)
+		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, result2, nil, new(int64(200)))
 		require.NoError(t, err, "Failed to update job status")
 
 		// Get the job and verify merged result

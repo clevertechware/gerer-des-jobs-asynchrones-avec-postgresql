@@ -164,10 +164,7 @@ func (w *Worker) processJob(ctx context.Context, job *domain.Job) {
 	}
 
 	// Job completed successfully
-	durationMs := time.Since(start).Milliseconds()
-	errMsg := ""
-
-	if err := w.repo.UpdateStatus(ctx, job.ID, domain.JobStatusCompleted, result, &errMsg, &durationMs); err != nil {
+	if err := w.repo.UpdateStatus(ctx, job.ID, domain.JobStatusCompleted, result, new(""), new(time.Since(start).Milliseconds())); err != nil {
 		log.Printf("Failed to update job %d status: %v", job.ID, err)
 	}
 }
@@ -184,23 +181,19 @@ func (w *Worker) shouldRetry(job *domain.Job) bool {
 }
 
 // requeueJob requeues a job with exponential backoff
-func (w *Worker) requeueJob(ctx context.Context, job *domain.Job, err error, start time.Time) {
-	durationMs := time.Since(start).Milliseconds()
-
-	// Calculate backoff: 2^(attempts-1) minutes
+func (w *Worker) requeueJob(ctx context.Context, job *domain.Job, err error, start time.Time) { // Calculate backoff: 2^(attempts-1) minutes
 	backoffMinutes := 1 << (job.Attempts - 1) // 1, 2, 4, 8, ...
 	if backoffMinutes > 60 {
 		backoffMinutes = 60 // Cap at 60 minutes
 	}
 
-	runAfter := time.Now().Add(time.Duration(backoffMinutes) * time.Minute).Format(time.RFC3339)
 	errMsg := err.Error()
 
 	// Update job to PENDING with backoff
-	if err := w.repo.UpdateToPending(ctx, job.ID, &runAfter, &errMsg); err != nil {
+	if err := w.repo.UpdateToPending(ctx, job.ID, new(time.Now().Add(time.Duration(backoffMinutes)*time.Minute).Format(time.RFC3339)), &errMsg); err != nil {
 		log.Printf("Failed to requeue job %d: %v", job.ID, err)
 		// If requeue fails, mark as failed
-		if updateErr := w.repo.UpdateStatus(ctx, job.ID, domain.JobStatusFailed, nil, &errMsg, &durationMs); updateErr != nil {
+		if updateErr := w.repo.UpdateStatus(ctx, job.ID, domain.JobStatusFailed, nil, &errMsg, new(time.Since(start).Milliseconds())); updateErr != nil {
 			log.Printf("Failed to update job %d to failed: %v", job.ID, updateErr)
 		}
 	}
@@ -208,9 +201,7 @@ func (w *Worker) requeueJob(ctx context.Context, job *domain.Job, err error, sta
 
 // failJob marks a job as failed
 func (w *Worker) failJob(ctx context.Context, jobID int64, errMsg string, start time.Time) {
-	durationMs := time.Since(start).Milliseconds()
-
-	if err := w.repo.UpdateStatus(ctx, jobID, domain.JobStatusFailed, nil, &errMsg, &durationMs); err != nil {
+	if err := w.repo.UpdateStatus(ctx, jobID, domain.JobStatusFailed, nil, &errMsg, new(time.Since(start).Milliseconds())); err != nil {
 		log.Printf("Failed to update job %d to failed: %v", jobID, err)
 	}
 }
