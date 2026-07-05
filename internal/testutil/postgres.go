@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,11 +16,42 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/tracelog"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	postgresModule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// testSQLLogger adapts stdlib log.Logger to tracelog.Logger interface
+type testSQLLogger struct {
+	logger *log.Logger
+}
+
+func (l *testSQLLogger) Log(ctx context.Context, level tracelog.LogLevel, msg string, data map[string]any) {
+	// Format the log level prefix
+	levelStr := ""
+	switch level {
+	case tracelog.LogLevelTrace:
+		levelStr = "[TRACE] "
+	case tracelog.LogLevelDebug:
+		levelStr = "[DEBUG] "
+	case tracelog.LogLevelInfo:
+		levelStr = "[INFO] "
+	case tracelog.LogLevelWarn:
+		levelStr = "[WARN] "
+	case tracelog.LogLevelError:
+		levelStr = "[ERROR] "
+	}
+
+	// Format data if present
+	dataStr := ""
+	if len(data) > 0 {
+		dataStr = fmt.Sprintf(" %+v", data)
+	}
+
+	l.logger.Printf("%s%s%s", levelStr, msg, dataStr)
+}
 
 // PostgreSQL container instance and connection pool
 var (
@@ -72,6 +104,17 @@ func SetupPostgresContainer(t *testing.T) (*pgxpool.Pool, func()) {
 		if err != nil {
 			setupErr = fmt.Errorf("failed to parse connection string: %w", err)
 			return
+		}
+
+		// Enable query logging for debugging using tracelog
+		// Create a logger that adapts stdlib log.Logger to tracelog.Logger
+		testLogger := &testSQLLogger{
+			logger: log.New(os.Stdout, "[TEST-SQL] ", log.LstdFlags),
+		}
+		config.ConnConfig.Tracer = &tracelog.TraceLog{
+			Logger:   testLogger,
+			LogLevel: tracelog.LogLevelDebug,
+			Config:   tracelog.DefaultTraceLogConfig(),
 		}
 
 		// Configure pool with smaller values for testing
