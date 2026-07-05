@@ -101,8 +101,9 @@ The implementation uses the same SQL model as the blog post:
 
 ### Prerequisites
 
-- Go 1.22+
-- PostgreSQL 10+
+- Go 1.26+
+- PostgreSQL 18 (the `postgres:18-alpine` image is used by `docker-compose.yml`; any PostgreSQL 10+
+  works too, since the schema only relies on `FOR UPDATE SKIP LOCKED` and `JSONB`, both available since 9.5/9.4)
 - Docker (optional, for docker-compose)
 
 ### Local Development
