@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,7 +124,7 @@ func (uc *CSVImportUsecase) Process(ctx context.Context, configJSON json.RawMess
 		}
 
 		// Validate record (example validation)
-		if err := uc.validateRecord(record, i+1); err != nil {
+		if err = uc.validateRecord(record, i+1); err != nil {
 			errors = append(errors, err.Error())
 			result.RowsSkipped++
 			continue
@@ -138,6 +139,7 @@ func (uc *CSVImportUsecase) Process(ctx context.Context, configJSON json.RawMess
 
 	// Mark file as processed
 	uc.processedFiles[fileHash] = true
+	slog.InfoContext(ctx, "Processed file", "file_hash", fileHash)
 
 	return json.Marshal(result)
 }
@@ -160,6 +162,7 @@ func (uc *CSVImportUsecase) calculateFileHash(filePath string) (string, error) {
 
 // validateRecord validates a CSV record
 func (uc *CSVImportUsecase) validateRecord(record []string, lineNum int) error {
+	slog.Info("Validating records", "record", record)
 	// Basic validation: ensure record is not empty and fields are not all empty
 	if len(record) == 0 {
 		return fmt.Errorf("line %d: empty record", lineNum)
