@@ -5,21 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"csv-job-processor/internal/domain"
 	"csv-job-processor/internal/repository"
+
+	"github.com/google/uuid"
 )
 
 // JobRepository implements repository.JobRepository using PostgreSQL
 type JobRepository struct {
-	db *pgxpool.Pool
+	txManager *PGTxManager
 }
 
 // NewJobRepository creates a new JobRepository
-func NewJobRepository(db *pgxpool.Pool) repository.JobRepository {
-	return &JobRepository{db: db}
+func NewJobRepository(txManager *PGTxManager) repository.JobRepository {
+	return &JobRepository{txManager: txManager}
 }
 
 // Create creates a new job and returns it with assigned ID
@@ -40,8 +39,9 @@ func (r *JobRepository) Create(ctx context.Context, tenantID string, jobType dom
 		RETURNING id, tenant_id, type, status, config, result, error, trace_id, started_at, finished_at, duration_ms, created_at, updated_at, run_after, attempts, max_attempts
 	`
 
+	pgClient := r.txManager.GetClient(ctx)
 	var job domain.Job
-	err = r.db.QueryRow(ctx, query, tenantUUID, jobType, configJSON).Scan(
+	err = pgClient.QueryRow(ctx, query, tenantUUID, jobType, configJSON).Scan(
 		&job.ID,
 		&job.TenantID,
 		&job.Type,
@@ -74,8 +74,9 @@ func (r *JobRepository) GetByID(ctx context.Context, id int64) (*domain.Job, err
 		WHERE id = $1
 	`
 
+	pgClient := r.txManager.GetClient(ctx)
 	var job domain.Job
-	err := r.db.QueryRow(ctx, query, id).Scan(
+	err := pgClient.QueryRow(ctx, query, id).Scan(
 		&job.ID,
 		&job.TenantID,
 		&job.Type,
@@ -122,7 +123,8 @@ func (r *JobRepository) Dequeue(ctx context.Context, batchSize int) ([]*domain.J
 		RETURNING id, tenant_id, type, status, operated_by, config, result, error, trace_id, started_at, finished_at, duration_ms, created_at, updated_at, run_after, attempts, max_attempts
 	`
 
-	rows, err := r.db.Query(ctx, query, batchSize)
+	pgClient := r.txManager.GetClient(ctx)
+	rows, err := pgClient.Query(ctx, query, batchSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dequeue jobs: %w", err)
 	}
@@ -131,7 +133,7 @@ func (r *JobRepository) Dequeue(ctx context.Context, batchSize int) ([]*domain.J
 	var jobs []*domain.Job
 	for rows.Next() {
 		var job domain.Job
-		err := rows.Scan(
+		err = rows.Scan(
 			&job.ID,
 			&job.TenantID,
 			&job.Type,
@@ -156,7 +158,7 @@ func (r *JobRepository) Dequeue(ctx context.Context, batchSize int) ([]*domain.J
 		jobs = append(jobs, &job)
 	}
 
-	if err := rows.Err(); err != nil {
+	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating jobs: %w", err)
 	}
 
@@ -181,7 +183,8 @@ func (r *JobRepository) UpdateStatus(ctx context.Context, id int64, status domai
 		WHERE id = $1
 	`
 
-	_, err = r.db.Exec(ctx, query, id, status, resultJSON, errMsg, durationMs)
+	pgClient := r.txManager.GetClient(ctx)
+	_, err = pgClient.Exec(ctx, query, id, status, resultJSON, errMsg, durationMs)
 	if err != nil {
 		return fmt.Errorf("failed to update job status: %w", err)
 	}
@@ -200,7 +203,8 @@ func (r *JobRepository) UpdateToPending(ctx context.Context, id int64, runAfter 
 		WHERE id = $1
 	`
 
-	_, err := r.db.Exec(ctx, query, id, errorMsg, runAfter)
+	pgClient := r.txManager.GetClient(ctx)
+	_, err := pgClient.Exec(ctx, query, id, errorMsg, runAfter)
 	if err != nil {
 		return fmt.Errorf("failed to update job to pending: %w", err)
 	}
@@ -217,7 +221,8 @@ func (r *JobRepository) GetQueueStats(ctx context.Context) (*domain.QueueStats, 
 		GROUP BY type, status
 	`
 
-	rows, err := r.db.Query(ctx, query)
+	pgClient := r.txManager.GetClient(ctx)
+	rows, err := pgClient.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get queue stats: %w", err)
 	}
@@ -231,7 +236,7 @@ func (r *JobRepository) GetQueueStats(ctx context.Context) (*domain.QueueStats, 
 		var jobType string
 		var status string
 		var count int
-		if err := rows.Scan(&jobType, &status, &count); err != nil {
+		if err = rows.Scan(&jobType, &status, &count); err != nil {
 			return nil, fmt.Errorf("failed to scan stats: %w", err)
 		}
 
@@ -263,7 +268,7 @@ func (r *JobRepository) GetQueueStats(ctx context.Context) (*domain.QueueStats, 
 		}
 	}
 
-	if err := rows.Err(); err != nil {
+	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating stats: %w", err)
 	}
 
@@ -280,7 +285,8 @@ func (r *JobRepository) GetJobsByStatus(ctx context.Context, status domain.JobSt
 		LIMIT $2
 	`
 
-	rows, err := r.db.Query(ctx, query, status, limit)
+	pgClient := r.txManager.GetClient(ctx)
+	rows, err := pgClient.Query(ctx, query, status, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get jobs by status: %w", err)
 	}
@@ -289,7 +295,7 @@ func (r *JobRepository) GetJobsByStatus(ctx context.Context, status domain.JobSt
 	var jobs []*domain.Job
 	for rows.Next() {
 		var job domain.Job
-		err := rows.Scan(
+		err = rows.Scan(
 			&job.ID,
 			&job.TenantID,
 			&job.Type,
@@ -314,7 +320,7 @@ func (r *JobRepository) GetJobsByStatus(ctx context.Context, status domain.JobSt
 		jobs = append(jobs, &job)
 	}
 
-	if err := rows.Err(); err != nil {
+	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating jobs: %w", err)
 	}
 
