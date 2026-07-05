@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"csv-job-processor/internal/domain"
-	"csv-job-processor/internal/repository"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository"
 
 	"github.com/google/uuid"
 )

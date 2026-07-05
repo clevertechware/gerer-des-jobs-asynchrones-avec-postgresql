@@ -36,7 +36,7 @@ func DefaultConfig() *Config {
 		DBPort:             5432,
 		DBUser:             "postgres",
 		DBPassword:         "postgres",
-		DBName:             "csv_job_processor",
+		DBName:             "gerer_ses_jobs_asynchrones_avec_postgresql",
 		DBSSLMode:          "disable",
 		ServerPort:         8080,
 		WorkerBatchSize:    5,

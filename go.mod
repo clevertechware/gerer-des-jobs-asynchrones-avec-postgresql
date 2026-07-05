@@ -1,4 +1,4 @@
-module csv-job-processor
+module github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql
 
 go 1.26.0
 

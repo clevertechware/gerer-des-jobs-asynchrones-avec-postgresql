@@ -12,8 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"csv-job-processor/internal/domain"
-	"csv-job-processor/internal/repository"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository"
 )
 
 // JobHandler handles HTTP requests for job management

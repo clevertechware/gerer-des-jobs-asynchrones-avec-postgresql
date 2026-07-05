@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"csv-job-processor/internal/domain"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
 )
 
 // JobRepository defines the interface for job persistence

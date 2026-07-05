@@ -3,11 +3,11 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: csv_job_processor_db
+    container_name: gerer_ses_jobs_asynchrones_avec_postgresql_db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: csv_job_processor
+      POSTGRES_DB: gerer_ses_jobs_asynchrones_avec_postgresql
     ports:
       - "5432:5432"
     volumes:
@@ -23,13 +23,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: csv_job_processor_app
+    container_name: gerer_ses_jobs_asynchrones_avec_postgresql_app
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: postgres
       DB_PASSWORD: postgres
-      DB_NAME: csv_job_processor
+      DB_NAME: gerer_ses_jobs_asynchrones_avec_postgresql
       DB_SSL_MODE: disable
       SERVER_PORT: 8080
       UPLOAD_DIR: /app/uploads

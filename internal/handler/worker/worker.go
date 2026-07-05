@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"csv-job-processor/internal/domain"
-	"csv-job-processor/internal/repository"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository"
 )
 
 // JobHandler is a function that processes a specific type of job

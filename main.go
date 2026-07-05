@@ -14,12 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"csv-job-processor/internal/config"
-	"csv-job-processor/internal/database"
-	"csv-job-processor/internal/handler/web"
-	"csv-job-processor/internal/handler/worker"
-	"csv-job-processor/internal/repository/postgres"
-	"csv-job-processor/internal/usecase"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/config"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/database"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/web"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/worker"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository/postgres"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/usecase"
 )
 
 func main() {

@@ -11,7 +11,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o csv-job-processor .
+RUN CGO_ENABLED=0 GOOS=linux go build -o gerer-ses-jobs-asynchrones-avec-postgresql .
 
 # Runtime stage
 FROM alpine:3.18
@@ -22,7 +22,7 @@ WORKDIR /app
 RUN apk --no-cache add ca-certificates tzdata
 
 # Copy binary from builder
-COPY --from=builder /app/csv-job-processor .
+COPY --from=builder /app/gerer-ses-jobs-asynchrones-avec-postgresql .
 COPY --from=builder /app/migrations ./migrations
 
 # Create uploads directory
@@ -33,4 +33,4 @@ ENV TZ=UTC
 
 EXPOSE 8080
 
-CMD ["./csv-job-processor"]
+CMD ["./gerer-ses-jobs-asynchrones-avec-postgresql"]

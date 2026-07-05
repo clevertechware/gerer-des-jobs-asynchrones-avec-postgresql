@@ -9,7 +9,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 
-	"csv-job-processor/internal/config"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/config"
 )
 
 // RunMigrations runs database migrations in a single transaction

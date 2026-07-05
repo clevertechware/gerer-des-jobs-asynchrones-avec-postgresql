@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"csv-job-processor/internal/testutil"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/testutil"
 )
 
 // PostgresSuite is the test suite for PostgreSQL repository tests

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"csv-job-processor/internal/domain"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
 )
 
 // TestJobRepository_Create tests the Create method

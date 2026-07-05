@@ -1,4 +1,4 @@
-# CSV Job Processor with PostgreSQL
+# Gérer des jobs asynchrones avec PostgreSQL
 
 A functional example of asynchronous job processing for CSV files using PostgreSQL as the job queue, GIN for web handlers, and pgx for database access.
 
@@ -19,7 +19,7 @@ This implementation follows the architecture described in the blog post "Gérer 
 ## Project Structure
 
 ```
-csv-job-processor/
+gerer-ses-jobs-asynchrones-avec-postgresql/
 ├── go.mod                          # Go module definition
 ├── go.sum                          # Dependency checksums
 ├── main.go                        # Entry point
@@ -132,7 +132,7 @@ The implementation uses the same SQL model as the blog post:
 | `DB_PORT` | 5432 | PostgreSQL port |
 | `DB_USER` | postgres | PostgreSQL user |
 | `DB_PASSWORD` | postgres | PostgreSQL password |
-| `DB_NAME` | csv_job_processor | Database name |
+| `DB_NAME` | gerer_ses_jobs_asynchrones_avec_postgresql | Database name |
 | `DB_SSL_MODE` | disable | SSL mode for PostgreSQL |
 | `SERVER_PORT` | 8080 | HTTP server port |
 | `UPLOAD_DIR` | ./uploads | Directory for uploaded files |

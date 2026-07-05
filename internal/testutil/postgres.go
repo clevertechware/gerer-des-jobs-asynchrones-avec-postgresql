@@ -19,8 +19,8 @@ import (
 	postgresModule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"csv-job-processor/internal/config"
-	"csv-job-processor/internal/database"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/config"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/database"
 )
 
 // testSQLLogger adapts stdlib log.Logger to tracelog.Logger interface
@@ -78,7 +78,7 @@ func SetupPostgresContainer(t *testing.T) (*pgxpool.Pool, func()) {
 		// Create PostgreSQL container using the postgres module
 		container, err := postgresModule.Run(ctx,
 			"postgres:15-alpine",
-			postgresModule.WithDatabase("csv_job_processor_test"),
+			postgresModule.WithDatabase("gerer_ses_jobs_asynchrones_avec_postgresql_test"),
 			postgresModule.WithUsername("testuser"),
 			postgresModule.WithPassword("testpass"),
 		)
