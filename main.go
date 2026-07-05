@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"csv-job-processor/internal/config"
+	"csv-job-processor/internal/database"
 	"csv-job-processor/internal/handler/web"
 	"csv-job-processor/internal/handler/worker"
 	"csv-job-processor/internal/repository/postgres"
@@ -33,6 +34,12 @@ func main() {
 	// Create upload directory
 	if err := os.MkdirAll(cfg.UploadDir, 0755); err != nil {
 		log.Fatalf("Failed to create upload directory: %v", err)
+	}
+
+	// Run database migrations
+	log.Println("Running database migrations...")
+	if err := database.RunMigrations(cfg, "migrations"); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
 	// Create database connection pool

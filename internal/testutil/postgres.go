@@ -4,12 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +18,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	postgresModule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"csv-job-processor/internal/config"
+	"csv-job-processor/internal/database"
 )
 
 // testSQLLogger adapts stdlib log.Logger to tracelog.Logger interface
@@ -221,64 +221,44 @@ func BeginTx(t *testing.T) pgx.Tx {
 	return tx
 }
 
-// runMigrations reads and executes all migration files from the migrations directory.
-// It looks for migrations in the current working directory's migrations folder.
-func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	// Try to find migrations directory starting from current working directory
-	// and moving up to 3 parent directories
-	var entries []fs.DirEntry
-	var readErr error
-	var migrationsDir string
-
-	wd, err := os.Getwd()
+// runMigrations applies all migrations from the migrations directory to the test database
+// via database.RunMigrations (golang-migrate), the same path used by the application.
+func runMigrations(_ context.Context, pool *pgxpool.Pool) error {
+	migrationsDir, err := findMigrationsDir()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %w", err)
+		return err
 	}
 
-	// Try current directory and parent directories
+	connCfg := pool.Config().ConnConfig
+	cfg := &config.Config{
+		DBHost:     connCfg.Host,
+		DBPort:     int(connCfg.Port),
+		DBUser:     connCfg.User,
+		DBPassword: connCfg.Password,
+		DBName:     connCfg.Database,
+		DBSSLMode:  "disable",
+	}
+
+	return database.RunMigrations(cfg, migrationsDir)
+}
+
+// findMigrationsDir locates the migrations directory starting from the current working
+// directory and moving up to 3 parent directories.
+func findMigrationsDir() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get working directory: %w", err)
+	}
+
 	for i := 0; i <= 3; i++ {
-		migrationsDir = filepath.Join(wd, "migrations")
-		entries, readErr = os.ReadDir(migrationsDir)
-		if readErr == nil {
-			break
+		migrationsDir := filepath.Join(wd, "migrations")
+		if entries, err := os.ReadDir(migrationsDir); err == nil && len(entries) > 0 {
+			return migrationsDir, nil
 		}
 		wd = filepath.Dir(wd)
 	}
 
-	if readErr != nil {
-		return fmt.Errorf("no migrations directory found: %w", readErr)
-	}
-
-	// Filter SQL files and sort by filename
-	var migrationFiles []fs.DirEntry
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
-			migrationFiles = append(migrationFiles, entry)
-		}
-	}
-
-	if len(migrationFiles) == 0 {
-		return fmt.Errorf("no .sql migration files found in %s", migrationsDir)
-	}
-
-	sort.Slice(migrationFiles, func(i, j int) bool {
-		return migrationFiles[i].Name() < migrationFiles[j].Name()
-	})
-
-	// Execute each migration
-	for _, entry := range migrationFiles {
-		content, err := os.ReadFile(filepath.Join(migrationsDir, entry.Name()))
-		if err != nil {
-			return fmt.Errorf("failed to read migration %s: %w", entry.Name(), err)
-		}
-
-		// Execute the migration SQL
-		if _, err := pool.Exec(ctx, string(content)); err != nil {
-			return fmt.Errorf("failed to execute migration %s: %w", entry.Name(), err)
-		}
-	}
-
-	return nil
+	return "", fmt.Errorf("no migrations directory found")
 }
 
 // CleanupJobsTable truncates the jobs table.

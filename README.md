@@ -42,10 +42,13 @@ csv-job-processor/
 │   │   │   └── job_handler.go     # GIN HTTP handlers
 │   │   └── worker/
 │   │       └── worker.go          # Background job worker
-│   └── config/
-│       └── config.go              # Configuration
+│   ├── config/
+│   │   └── config.go              # Configuration
+│   └── database/
+│       └── migrate.go             # golang-migrate runner
 └── migrations/
-    └── 001_create_jobs_table.sql   # Database schema
+    ├── 000001_create_jobs_table.up.sql   # Database schema
+    └── 000001_create_jobs_table.down.sql # Rollback
 ```
 
 ## Database Schema
@@ -109,17 +112,14 @@ The implementation uses the same SQL model as the blog post:
    docker-compose up -d postgres
    ```
 
-2. **Create the jobs table**:
-   ```bash
-   psql -h localhost -U postgres -d csv_job_processor -f migrations/001_create_jobs_table.sql
-   ```
-
-3. **Run the application**:
+2. **Run the application**:
    ```bash
    go run main.go
    ```
+   Database migrations (`migrations/*.up.sql`) are applied automatically on startup via
+   [golang-migrate](https://github.com/golang-migrate/migrate) — no manual `psql` step needed.
 
-4. **Or use Docker Compose for everything**:
+3. **Or use Docker Compose for everything**:
    ```bash
    docker-compose up -d
    ```
