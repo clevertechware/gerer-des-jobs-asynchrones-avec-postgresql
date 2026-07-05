@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -56,8 +57,11 @@ func main() {
 	}
 	log.Println("Database connection established")
 
+	// Create transaction manager
+	txManager := postgres.NewPGTxManager(slog.Default(), db)
+
 	// Create repositories
-	jobRepo := postgres.NewJobRepository(db)
+	jobRepo := postgres.NewJobRepository(txManager)
 
 	// Create use cases
 	csvUsecase := usecase.NewCSVImportUsecase(cfg.UploadDir)

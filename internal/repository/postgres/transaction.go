@@ -28,6 +28,9 @@ type AdvancedTransactionalPGClient interface {
 }
 type txKey struct{}
 
+// TxKey is the context key for storing database transactions.
+var TxKey = txKey{}
+
 // PGTxManager provides helper methods for managing database transactions using a PostgreSQL client.
 type PGTxManager struct {
 	logger   *slog.Logger
@@ -39,13 +42,13 @@ func NewPGTxManager(logger *slog.Logger, pgClient AdvancedTransactionalPGClient)
 	return &PGTxManager{logger: logger, pgClient: pgClient}
 }
 
-// unitOfWork represents a function that performs a transactional operation using a database transaction.
-type unitOfWork func(ctx context.Context) error
+// UnitOfWork represents a function that performs a transactional operation using a database transaction.
+type UnitOfWork func(ctx context.Context) error
 
 // Execute performs a transactional operation using the provided UnitOfWork and manages commit,
 // rollback, and error handling.
-func (t *PGTxManager) Execute(ctx context.Context, unitOfWork unitOfWork) error {
-	if txExists(ctx) {
+func (t *PGTxManager) Execute(ctx context.Context, unitOfWork UnitOfWork) error {
+	if TxExists(ctx) {
 		return unitOfWork(ctx)
 	}
 
@@ -64,7 +67,7 @@ func (t *PGTxManager) Execute(ctx context.Context, unitOfWork unitOfWork) error 
 		}
 	}(ctx, tx)
 
-	if err = unitOfWork(contextWithTx(ctx, tx)); err != nil {
+	if err = unitOfWork(ContextWithTx(ctx, tx)); err != nil {
 		if rollBackErr := tx.Rollback(ctx); rollBackErr != nil {
 			return fmt.Errorf("failed to rollback transaction: %w", rollBackErr)
 		}
@@ -78,23 +81,23 @@ func (t *PGTxManager) Execute(ctx context.Context, unitOfWork unitOfWork) error 
 	return nil
 }
 
-// contextWithTx embeds the given database transaction into the provided context for use in downstream operations.
-func contextWithTx(ctx context.Context, tx pgx.Tx) context.Context {
-	return context.WithValue(ctx, txKey{}, tx)
+// ContextWithTx embeds the given database transaction into the provided context for use in downstream operations.
+func ContextWithTx(ctx context.Context, tx pgx.Tx) context.Context {
+	return context.WithValue(ctx, TxKey, tx)
 }
 
 // GetClient retrieves the current transactional PostgreSQL client from the context
 // or returns the default non-transactional one.
 func (t *PGTxManager) GetClient(ctx context.Context) PGClient {
-	if openedTx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+	if openedTx, ok := ctx.Value(TxKey).(pgx.Tx); ok {
 		return openedTx
 	}
 	return t.pgClient
 }
 
-// txExists checks if the provided context contains an active pgx.Tx transaction and returns true if it does.
-func txExists(ctx context.Context) bool {
-	if _, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+// TxExists checks if the provided context contains an active pgx.Tx transaction and returns true if it does.
+func TxExists(ctx context.Context) bool {
+	if _, ok := ctx.Value(TxKey).(pgx.Tx); ok {
 		return true
 	}
 	return false

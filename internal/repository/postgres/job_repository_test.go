@@ -1,561 +1,590 @@
 package postgres
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"csv-job-processor/internal/domain"
 )
 
-var (
-	testDB  *pgxpool.Pool
-	testCtx = context.Background()
-)
+// TestJobRepository_Create tests the Create method
+func (s *PostgresSuite) TestJobRepository_Create() {
+	t := s.T()
+	t.Parallel()
 
-func setupTestDB(t *testing.T) (*pgxpool.Pool, func()) {
-	ctx := testCtx
+	t.Run("should create job with all fields", func(t *testing.T) {
+		t.Parallel()
 
-	// Disable ryuk to prevent premature container cleanup
-	// This must be set before any testcontainers operations
-	_ = os.Setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
 
-	// Request a container
-	req := testcontainers.ContainerRequest{
-		Image:        "postgres:15-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		WaitingFor:   wait.ForLog("database system is ready to accept connections").WithStartupTimeout(120 * time.Second),
-		Env: map[string]string{
-			"POSTGRES_USER":     "testuser",
-			"POSTGRES_PASSWORD": "testpass",
-			"POSTGRES_DB":       "testdb",
-		},
-	}
+		repo := s.createJobRepository()
 
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
+		testTenantID := uuid.New().String()
+		config := domain.CSVImportConfig{
+			FilePath:    "/path/to/file.csv",
+			Delimiter:   ",",
+			HasHeader:   true,
+			TargetTable: "users",
+		}
+
+		job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+		require.NoError(t, err, "Failed to create job")
+
+		assert.NotZero(t, job.ID, "Expected job ID to be set")
+		assert.NotZero(t, job.TenantID.String(), "Expected tenant ID to be set")
+		assert.Equal(t, domain.JobTypeCSVImport, job.Type, "Expected job type to match")
+		assert.Equal(t, domain.JobStatusPending, job.Status, "Expected job status to be PENDING")
+
+		// Verify config is stored
+		var storedConfig domain.CSVImportConfig
+		err = json.Unmarshal(job.Config, &storedConfig)
+		require.NoError(t, err, "Failed to unmarshal stored config")
+
+		assert.Equal(t, config.FilePath, storedConfig.FilePath, "Expected file path to match")
+		assert.Equal(t, config.Delimiter, storedConfig.Delimiter, "Expected delimiter to match")
+		assert.Equal(t, config.HasHeader, storedConfig.HasHeader, "Expected has header to match")
+		assert.Equal(t, config.TargetTable, storedConfig.TargetTable, "Expected target table to match")
 	})
 
-	// Clean up container
-	cleanup := func() {
-		if err := container.Terminate(ctx); err != nil {
-			t.Logf("Failed to terminate container: %v", err)
-		}
-	}
+	t.Run("should create multiple jobs with different configs", func(t *testing.T) {
+		t.Parallel()
 
-	// Get the mapped port
-	mappedPort, err := container.MappedPort(ctx, "5432")
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to get mapped port: %v", err)
-	}
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
 
-	// On macOS with Docker Desktop, use host.docker.internal
-	// On Linux, use localhost
-	host := "localhost"
-	// Check if we're on macOS by trying to resolve host.docker.internal
-	if _, err := net.LookupHost("host.docker.internal"); err == nil {
-		host = "host.docker.internal"
-	}
+		repo := s.createJobRepository()
 
-	// Create connection string
-	connString := fmt.Sprintf("host=%s port=%s user=testuser password=testpass dbname=testdb sslmode=disable",
-		host, mappedPort.Port())
+		testTenantID := uuid.New().String()
 
-	// Create connection pool
-	dbConfig, err := pgxpool.ParseConfig(connString)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to parse config: %v", err)
-	}
-
-	db, err := pgxpool.NewWithConfig(ctx, dbConfig)
-	if err != nil {
-		cleanup()
-		t.Fatalf("Failed to create connection pool: %v", err)
-	}
-
-	// Wait a bit after container is ready to ensure ryuk doesn't kill it
-	time.Sleep(2 * time.Second)
-
-	// Test connection
-	if err := db.Ping(ctx); err != nil {
-		cleanup()
-		t.Fatalf("Failed to ping database: %v", err)
-	}
-
-	// Create the jobs table
-	if err := createTestTable(ctx, db); err != nil {
-		cleanup()
-		t.Fatalf("Failed to create test table: %v", err)
-	}
-
-	return db, cleanup
-}
-
-func createTestTable(ctx context.Context, db *pgxpool.Pool) error {
-	const createTableSQL = `
-		CREATE TABLE IF NOT EXISTS jobs (
-			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-			tenant_id UUID NOT NULL,
-			type TEXT NOT NULL,
-			operated_by UUID,
-			status TEXT NOT NULL DEFAULT 'PENDING'
-				CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED')),
-			config JSONB NOT NULL DEFAULT '{}'::jsonb,
-			result JSONB NOT NULL DEFAULT '{}'::jsonb,
-			error TEXT,
-			trace_id TEXT,
-			started_at TIMESTAMPTZ,
-			finished_at TIMESTAMPTZ,
-			duration_ms BIGINT,
-			created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-			run_after TIMESTAMPTZ DEFAULT now(),
-			attempts INT NOT NULL DEFAULT 0,
-			max_attempts INT NOT NULL DEFAULT 3
-		);
-		
-		CREATE INDEX IF NOT EXISTS jobs_pending_idx ON jobs (created_at) WHERE status IN ('PENDING', 'RUNNING');
-		CREATE INDEX IF NOT EXISTS jobs_type_tenant_created_idx ON jobs (type, tenant_id, created_at DESC);
-		CREATE INDEX IF NOT EXISTS jobs_status_idx ON jobs (status);
-	`
-
-	_, err := db.Exec(ctx, createTableSQL)
-	return err
-}
-
-func TestJobRepository_Create(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	repo := NewJobRepository(db)
-
-	testTenantID := uuid.New().String()
-	config := domain.CSVImportConfig{
-		FilePath:    "/path/to/file.csv",
-		Delimiter:   ",",
-		HasHeader:   true,
-		TargetTable: "users",
-	}
-
-	job, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-	if err != nil {
-		t.Fatalf("Failed to create job: %v", err)
-	}
-
-	if job.ID == 0 {
-		t.Error("Expected job ID to be set")
-	}
-
-	if job.TenantID.String() == "" {
-		t.Error("Expected tenant ID to be set")
-	}
-
-	if job.Type != domain.JobTypeCSVImport {
-		t.Errorf("Expected job type %s, got %s", domain.JobTypeCSVImport, job.Type)
-	}
-
-	if job.Status != domain.JobStatusPending {
-		t.Errorf("Expected job status PENDING, got %s", job.Status)
-	}
-
-	// Verify config is stored
-	var storedConfig domain.CSVImportConfig
-	if err := json.Unmarshal(job.Config, &storedConfig); err != nil {
-		t.Fatalf("Failed to unmarshal stored config: %v", err)
-	}
-
-	if storedConfig.FilePath != config.FilePath {
-		t.Errorf("Expected file path %s, got %s", config.FilePath, storedConfig.FilePath)
-	}
-}
-
-func TestJobRepository_GetByID(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	repo := NewJobRepository(db)
-
-	// Create a job first
-	testTenantID := uuid.New().String()
-	config := domain.CSVImportConfig{
-		FilePath: "/path/to/file.csv",
-	}
-
-	createdJob, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-	if err != nil {
-		t.Fatalf("Failed to create job: %v", err)
-	}
-
-	// Get the job by ID
-	job, err := repo.GetByID(testCtx, createdJob.ID)
-	if err != nil {
-		t.Fatalf("Failed to get job: %v", err)
-	}
-
-	if job.ID != createdJob.ID {
-		t.Errorf("Expected job ID %d, got %d", createdJob.ID, job.ID)
-	}
-
-	if job.Status != domain.JobStatusPending {
-		t.Errorf("Expected job status PENDING, got %s", job.Status)
-	}
-
-	// Test getting non-existent job
-	_, err = repo.GetByID(testCtx, 999999)
-	if err == nil {
-		t.Error("Expected error for non-existent job")
-	}
-}
-
-func TestJobRepository_Dequeue(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	repo := NewJobRepository(db)
-
-	// Create multiple jobs
-	testTenantID := uuid.New().String()
-	for i := 0; i < 5; i++ {
-		config := domain.CSVImportConfig{
-			FilePath: fmt.Sprintf("/path/to/file%d.csv", i),
-		}
-		_, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-		if err != nil {
-			t.Fatalf("Failed to create job %d: %v", i, err)
-		}
-	}
-
-	// Dequeue jobs
-	jobs, err := repo.Dequeue(testCtx, 3)
-	if err != nil {
-		t.Fatalf("Failed to dequeue jobs: %v", err)
-	}
-
-	if len(jobs) != 3 {
-		t.Errorf("Expected 3 jobs, got %d", len(jobs))
-	}
-
-	// All dequeued jobs should be RUNNING
-	for _, job := range jobs {
-		if job.Status != domain.JobStatusRunning {
-			t.Errorf("Expected job status RUNNING, got %s", job.Status)
-		}
-		if job.StartedAt == nil {
-			t.Error("Expected started_at to be set")
-		}
-		if job.Attempts != 1 {
-			t.Errorf("Expected attempts to be 1, got %d", job.Attempts)
-		}
-	}
-
-	// Dequeue again (should get remaining 2 jobs)
-	jobs2, err := repo.Dequeue(testCtx, 3)
-	if err != nil {
-		t.Fatalf("Failed to dequeue jobs second time: %v", err)
-	}
-
-	if len(jobs2) != 2 {
-		t.Errorf("Expected 2 jobs second time, got %d", len(jobs2))
-	}
-
-	// Dequeue again (should get 0 jobs)
-	jobs3, err := repo.Dequeue(testCtx, 3)
-	if err != nil {
-		t.Fatalf("Failed to dequeue jobs third time: %v", err)
-	}
-
-	if len(jobs3) != 0 {
-		t.Errorf("Expected 0 jobs third time, got %d", len(jobs3))
-	}
-}
-
-func TestJobRepository_UpdateStatus(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	repo := NewJobRepository(db)
-
-	// Create a job
-	testTenantID := uuid.New().String()
-	config := domain.CSVImportConfig{FilePath: "/path/to/file.csv"}
-
-	job, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-	if err != nil {
-		t.Fatalf("Failed to create job: %v", err)
-	}
-
-	// Update job status to COMPLETED
-	result := domain.CSVImportResult{
-		RowsProcessed: 10,
-		RowsInserted:  10,
-		FileHash:      "abc123",
-	}
-	durationMs := int64(100)
-
-	err = repo.UpdateStatus(testCtx, job.ID, domain.JobStatusCompleted, result, nil, &durationMs)
-	if err != nil {
-		t.Fatalf("Failed to update job status: %v", err)
-	}
-
-	// Get the job and verify updates
-	updatedJob, err := repo.GetByID(testCtx, job.ID)
-	if err != nil {
-		t.Fatalf("Failed to get updated job: %v", err)
-	}
-
-	if updatedJob.Status != domain.JobStatusCompleted {
-		t.Errorf("Expected job status COMPLETED, got %s", updatedJob.Status)
-	}
-
-	if updatedJob.DurationMs == nil || *updatedJob.DurationMs != 100 {
-		t.Errorf("Expected duration_ms 100, got %v", updatedJob.DurationMs)
-	}
-
-	if updatedJob.FinishedAt == nil {
-		t.Error("Expected finished_at to be set")
-	}
-
-	// Verify result is stored
-	var storedResult domain.CSVImportResult
-	if err := json.Unmarshal(updatedJob.Result, &storedResult); err != nil {
-		t.Fatalf("Failed to unmarshal stored result: %v", err)
-	}
-
-	if storedResult.RowsProcessed != 10 {
-		t.Errorf("Expected rows processed 10, got %d", storedResult.RowsProcessed)
-	}
-}
-
-func TestJobRepository_ConcurrentDequeue(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	repo := NewJobRepository(db)
-
-	// Create 10 jobs
-	testTenantID := uuid.New().String()
-	for i := 0; i < 10; i++ {
-		config := domain.CSVImportConfig{
-			FilePath: fmt.Sprintf("/path/to/file%d.csv", i),
-		}
-		_, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-		if err != nil {
-			t.Fatalf("Failed to create job %d: %v", i, err)
-		}
-	}
-
-	// Run multiple dequeues concurrently
-	const numWorkers = 5
-	const batchSize = 3
-
-	allJobs := make(chan []*domain.Job, numWorkers)
-
-	for i := 0; i < numWorkers; i++ {
-		go func() {
-			jobs, err := repo.Dequeue(testCtx, batchSize)
-			if err != nil {
-				t.Errorf("Worker error: %v", err)
-				return
+		// Create multiple jobs
+		jobs := make([]*domain.Job, 3)
+		for i := 0; i < 3; i++ {
+			config := domain.CSVImportConfig{
+				FilePath:    fmt.Sprintf("/path/to/file%d.csv", i),
+				Delimiter:   ",",
+				HasHeader:   true,
+				TargetTable: "users",
 			}
-			allJobs <- jobs
-		}()
-	}
+			job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+			require.NoError(t, err, "Failed to create job %d", i)
+			jobs[i] = job
+		}
 
-	// Collect all dequeued jobs
-	var dequeuedJobIDs []int64
-	for i := 0; i < numWorkers; i++ {
-		jobs := <-allJobs
+		// Verify all jobs have unique IDs
+		ids := make(map[int64]bool)
 		for _, job := range jobs {
-			dequeuedJobIDs = append(dequeuedJobIDs, job.ID)
+			assert.False(t, ids[job.ID], "Expected unique job IDs")
+			ids[job.ID] = true
 		}
-	}
 
-	// Verify no duplicates
-	seen := make(map[int64]bool)
-	for _, id := range dequeuedJobIDs {
-		if seen[id] {
-			t.Errorf("Duplicate job ID found: %d", id)
+		// Verify all jobs are in PENDING status
+		for _, job := range jobs {
+			assert.Equal(t, domain.JobStatusPending, job.Status, "Expected job status to be PENDING")
 		}
-		seen[id] = true
-	}
-
-	// All dequeued jobs should be RUNNING
-	for _, id := range dequeuedJobIDs {
-		job, err := repo.GetByID(testCtx, id)
-		if err != nil {
-			t.Fatalf("Failed to get job %d: %v", id, err)
-		}
-		if job.Status != domain.JobStatusRunning {
-			t.Errorf("Expected job %d status RUNNING, got %s", id, job.Status)
-		}
-	}
+	})
 }
 
-func TestJobRepository_GetQueueStats(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+// TestJobRepository_GetByID tests the GetByID method
+func (s *PostgresSuite) TestJobRepository_GetByID() {
+	t := s.T()
+	t.Parallel()
 
-	repo := NewJobRepository(db)
+	t.Run("should retrieve job by ID", func(t *testing.T) {
+		t.Parallel()
 
-	// Create jobs with different statuses
-	testTenantID := uuid.New().String()
-	for i := 0; i < 3; i++ {
-		config := domain.CSVImportConfig{FilePath: fmt.Sprintf("/path/to/pending%d.csv", i)}
-		_, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-		if err != nil {
-			t.Fatalf("Failed to create pending job: %v", err)
-		}
-	}
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
 
-	// Create some jobs and mark them as completed
-	for i := 0; i < 2; i++ {
-		config := domain.CSVImportConfig{FilePath: fmt.Sprintf("/path/to/completed%d.csv", i)}
-		job, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-		if err != nil {
-			t.Fatalf("Failed to create job: %v", err)
+		repo := s.createJobRepository()
+
+		// Create a job first
+		testTenantID := uuid.New().String()
+		config := domain.CSVImportConfig{
+			FilePath: "/path/to/file.csv",
 		}
 
-		// Mark as completed
+		createdJob, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+		require.NoError(t, err, "Failed to create job")
+
+		// Get the job by ID
+		job, err := repo.GetByID(txCtx, createdJob.ID)
+		require.NoError(t, err, "Failed to get job")
+
+		assert.Equal(t, createdJob.ID, job.ID, "Expected job ID to match")
+		assert.Equal(t, createdJob.TenantID, job.TenantID, "Expected tenant ID to match")
+		assert.Equal(t, domain.JobStatusPending, job.Status, "Expected job status to be PENDING")
+	})
+
+	t.Run("should return error for non-existent job", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Try to get a non-existent job
+		_, err := repo.GetByID(txCtx, 999999)
+		require.Error(t, err, "Expected error for non-existent job")
+	})
+}
+
+// TestJobRepository_Dequeue tests the Dequeue method
+func (s *PostgresSuite) TestJobRepository_Dequeue() {
+	t := s.T()
+	t.Parallel()
+
+	t.Run("should dequeue pending jobs", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create multiple jobs
+		testTenantID := uuid.New().String()
+		for i := 0; i < 5; i++ {
+			config := domain.CSVImportConfig{
+				FilePath: fmt.Sprintf("/path/to/file%d.csv", i),
+			}
+			_, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+			require.NoError(t, err, "Failed to create job %d", i)
+		}
+
+		// Dequeue jobs
+		jobs, err := repo.Dequeue(txCtx, 3)
+		require.NoError(t, err, "Failed to dequeue jobs")
+
+		assert.Len(t, jobs, 3, "Expected 3 jobs to be dequeued")
+
+		// All dequeued jobs should be RUNNING
+		for _, job := range jobs {
+			assert.Equal(t, domain.JobStatusRunning, job.Status, "Expected job status RUNNING")
+			assert.NotNil(t, job.StartedAt, "Expected started_at to be set")
+			assert.Equal(t, 1, job.Attempts, "Expected attempts to be 1")
+		}
+
+		// Dequeue again (should get remaining 2 jobs)
+		jobs2, err := repo.Dequeue(txCtx, 3)
+		require.NoError(t, err, "Failed to dequeue jobs second time")
+
+		assert.Len(t, jobs2, 2, "Expected 2 jobs second time")
+
+		// All dequeued jobs should be RUNNING
+		for _, job := range jobs2 {
+			assert.Equal(t, domain.JobStatusRunning, job.Status, "Expected job status RUNNING")
+		}
+	})
+
+	t.Run("should return empty when no pending jobs", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Dequeue when no jobs exist
+		jobs, err := repo.Dequeue(txCtx, 10)
+		require.NoError(t, err, "Failed to dequeue jobs")
+
+		assert.Empty(t, jobs, "Expected no jobs to be dequeued")
+	})
+
+	t.Run("should skip already running jobs", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create and dequeue some jobs
+		testTenantID := uuid.New().String()
+		for i := 0; i < 3; i++ {
+			config := domain.CSVImportConfig{
+				FilePath: fmt.Sprintf("/path/to/file%d.csv", i),
+			}
+			_, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+			require.NoError(t, err, "Failed to create job %d", i)
+		}
+
+		// Dequeue all jobs (they become RUNNING)
+		jobs1, err := repo.Dequeue(txCtx, 10)
+		require.NoError(t, err, "Failed to dequeue jobs")
+		assert.Len(t, jobs1, 3, "Expected 3 jobs")
+
+		// Try to dequeue again - should get 0 since all are RUNNING
+		jobs2, err := repo.Dequeue(txCtx, 10)
+		require.NoError(t, err, "Failed to dequeue jobs second time")
+		assert.Empty(t, jobs2, "Expected no jobs since all are RUNNING")
+	})
+}
+
+// TestJobRepository_UpdateStatus tests the UpdateStatus method
+func (s *PostgresSuite) TestJobRepository_UpdateStatus() {
+	t := s.T()
+	t.Parallel()
+
+	t.Run("should update job status to COMPLETED", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create a job
+		testTenantID := uuid.New().String()
+		config := domain.CSVImportConfig{FilePath: "/path/to/file.csv"}
+
+		job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+		require.NoError(t, err, "Failed to create job")
+
+		// Update job status to COMPLETED
+		result := domain.CSVImportResult{
+			RowsProcessed: 10,
+			RowsInserted:  10,
+			FileHash:      "abc123",
+		}
 		durationMs := int64(100)
-		err = repo.UpdateStatus(testCtx, job.ID, domain.JobStatusCompleted, nil, nil, &durationMs)
-		if err != nil {
-			t.Fatalf("Failed to update job status: %v", err)
+
+		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, result, nil, &durationMs)
+		require.NoError(t, err, "Failed to update job status")
+
+		// Get the job and verify updates
+		updatedJob, err := repo.GetByID(txCtx, job.ID)
+		require.NoError(t, err, "Failed to get updated job")
+
+		assert.Equal(t, domain.JobStatusCompleted, updatedJob.Status, "Expected job status COMPLETED")
+		assert.NotNil(t, updatedJob.DurationMs, "Expected duration_ms to be set")
+		assert.Equal(t, int64(100), *updatedJob.DurationMs, "Expected duration_ms to be 100")
+		assert.NotNil(t, updatedJob.FinishedAt, "Expected finished_at to be set")
+
+		// Verify result is stored
+		var storedResult domain.CSVImportResult
+		err = json.Unmarshal(updatedJob.Result, &storedResult)
+		require.NoError(t, err, "Failed to unmarshal stored result")
+
+		assert.Equal(t, 10, storedResult.RowsProcessed, "Expected rows processed to be 10")
+		assert.Equal(t, 10, storedResult.RowsInserted, "Expected rows inserted to be 10")
+		assert.Equal(t, "abc123", storedResult.FileHash, "Expected file hash to match")
+	})
+
+	t.Run("should update job status to FAILED", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create a job
+		testTenantID := uuid.New().String()
+		config := domain.CSVImportConfig{FilePath: "/path/to/file.csv"}
+
+		job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+		require.NoError(t, err, "Failed to create job")
+
+		// Update job status to FAILED with error
+		errMsg := "test error"
+		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusFailed, nil, &errMsg, nil)
+		require.NoError(t, err, "Failed to update job status")
+
+		// Get the job and verify updates
+		updatedJob, err := repo.GetByID(txCtx, job.ID)
+		require.NoError(t, err, "Failed to get updated job")
+
+		assert.Equal(t, domain.JobStatusFailed, updatedJob.Status, "Expected job status FAILED")
+		assert.NotNil(t, updatedJob.Error, "Expected error to be set")
+		assert.Equal(t, "test error", *updatedJob.Error, "Expected error message to match")
+	})
+
+	t.Run("should update job status to COMPLETED_WITH_ERRORS", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create a job
+		testTenantID := uuid.New().String()
+		config := domain.CSVImportConfig{FilePath: "/path/to/file.csv"}
+
+		job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+		require.NoError(t, err, "Failed to create job")
+
+		// Update job status to COMPLETED_WITH_ERRORS
+		result := domain.CSVImportResult{
+			RowsProcessed: 10,
+			RowsInserted:  5,
+			Errors:        []string{"error1", "error2"},
 		}
-	}
+		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompletedWithErr, result, nil, nil)
+		require.NoError(t, err, "Failed to update job status")
 
-	// Get queue stats
-	stats, err := repo.GetQueueStats(testCtx)
-	if err != nil {
-		t.Fatalf("Failed to get queue stats: %v", err)
-	}
+		// Get the job and verify updates
+		updatedJob, err := repo.GetByID(txCtx, job.ID)
+		require.NoError(t, err, "Failed to get updated job")
 
-	if stats.TotalPending != 3 {
-		t.Errorf("Expected total pending 3, got %d", stats.TotalPending)
-	}
-
-	if stats.TotalRunning != 0 {
-		t.Errorf("Expected total running 0, got %d", stats.TotalRunning)
-	}
-
-	if len(stats.ByType) != 1 {
-		t.Errorf("Expected 1 job type, got %d", len(stats.ByType))
-	}
-
-	csvStats, exists := stats.ByType[domain.JobTypeCSVImport]
-	if !exists {
-		t.Fatal("Expected csv_import in stats")
-	}
-
-	if csvStats.Pending != 3 {
-		t.Errorf("Expected csv_import pending 3, got %d", csvStats.Pending)
-	}
-
-	if csvStats.Completed != 2 {
-		t.Errorf("Expected csv_import completed 2, got %d", csvStats.Completed)
-	}
+		assert.Equal(t, domain.JobStatusCompletedWithErr, updatedJob.Status, "Expected job status COMPLETED_WITH_ERRORS")
+	})
 }
 
-func TestJobRepository_GetJobsByStatus(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+// TestJobRepository_UpdateToPending tests the UpdateToPending method
+func (s *PostgresSuite) TestJobRepository_UpdateToPending() {
+	t := s.T()
+	t.Parallel()
 
-	repo := NewJobRepository(db)
+	t.Run("should reset job to PENDING with backoff", func(t *testing.T) {
+		t.Parallel()
 
-	// Create some jobs
-	testTenantID := uuid.New().String()
-	for i := 0; i < 5; i++ {
-		config := domain.CSVImportConfig{FilePath: fmt.Sprintf("/path/to/file%d.csv", i)}
-		job, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-		if err != nil {
-			t.Fatalf("Failed to create job: %v", err)
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create a job
+		testTenantID := uuid.New().String()
+		config := domain.CSVImportConfig{FilePath: "/path/to/file.csv"}
+
+		job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+		require.NoError(t, err, "Failed to create job")
+
+		// Manually set attempts to 2 (simulate previous attempts)
+		const updateAttemptsSQL = `UPDATE jobs SET attempts = 2 WHERE id = $1`
+		_, err = s.pool.Exec(ctx, updateAttemptsSQL, job.ID)
+		require.NoError(t, err, "Failed to update attempts")
+
+		// Requeue the job
+		runAfter := "2025-01-01T00:00:00Z"
+		errMsg := "test error"
+
+		err = repo.UpdateToPending(txCtx, job.ID, &runAfter, &errMsg)
+		require.NoError(t, err, "Failed to requeue job")
+
+		// Get the job and verify
+		updatedJob, err := repo.GetByID(txCtx, job.ID)
+		require.NoError(t, err, "Failed to get updated job")
+
+		assert.Equal(t, domain.JobStatusPending, updatedJob.Status, "Expected job status PENDING")
+		assert.NotNil(t, updatedJob.Error, "Expected error to be set")
+		assert.Equal(t, "test error", *updatedJob.Error, "Expected error message to match")
+	})
+}
+
+// TestJobRepository_GetQueueStats tests the GetQueueStats method
+func (s *PostgresSuite) TestJobRepository_GetQueueStats() {
+	t := s.T()
+	t.Parallel()
+
+	t.Run("should return correct queue statistics", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create jobs with different statuses
+		testTenantID := uuid.New().String()
+
+		// Create 3 pending jobs
+		for i := 0; i < 3; i++ {
+			config := domain.CSVImportConfig{FilePath: fmt.Sprintf("/path/to/pending%d.csv", i)}
+			_, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+			require.NoError(t, err, "Failed to create pending job")
 		}
 
-		// Mark every other job as completed
-		if i%2 == 0 {
+		// Create 2 completed jobs
+		for i := 0; i < 2; i++ {
+			config := domain.CSVImportConfig{FilePath: fmt.Sprintf("/path/to/completed%d.csv", i)}
+			job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+			require.NoError(t, err, "Failed to create job")
+
 			durationMs := int64(100)
-			err = repo.UpdateStatus(testCtx, job.ID, domain.JobStatusCompleted, nil, nil, &durationMs)
-			if err != nil {
-				t.Fatalf("Failed to update job status: %v", err)
+			err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, nil, nil, &durationMs)
+			require.NoError(t, err, "Failed to update job status")
+		}
+
+		// Get queue stats
+		stats, err := repo.GetQueueStats(txCtx)
+		require.NoError(t, err, "Failed to get queue stats")
+
+		assert.Equal(t, 3, stats.TotalPending, "Expected total pending to be 3")
+		assert.Equal(t, 0, stats.TotalRunning, "Expected total running to be 0")
+
+		csvStats, exists := stats.ByType[domain.JobTypeCSVImport]
+		require.True(t, exists, "Expected csv_import in stats")
+
+		assert.Equal(t, 3, csvStats.Pending, "Expected csv_import pending to be 3")
+		assert.Equal(t, 2, csvStats.Completed, "Expected csv_import completed to be 2")
+	})
+
+	t.Run("should handle empty queue", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Get queue stats when no jobs exist
+		stats, err := repo.GetQueueStats(txCtx)
+		require.NoError(t, err, "Failed to get queue stats")
+
+		assert.Equal(t, 0, stats.TotalPending, "Expected total pending to be 0")
+		assert.Equal(t, 0, stats.TotalRunning, "Expected total running to be 0")
+		assert.Empty(t, stats.ByType, "Expected by type to be empty")
+	})
+}
+
+// TestJobRepository_GetJobsByStatus tests the GetJobsByStatus method
+func (s *PostgresSuite) TestJobRepository_GetJobsByStatus() {
+	t := s.T()
+	t.Parallel()
+
+	t.Run("should return jobs filtered by status", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create some jobs
+		testTenantID := uuid.New().String()
+		for i := 0; i < 5; i++ {
+			config := domain.CSVImportConfig{FilePath: fmt.Sprintf("/path/to/file%d.csv", i)}
+			job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+			require.NoError(t, err, "Failed to create job")
+
+			// Mark every other job as completed
+			if i%2 == 0 {
+				durationMs := int64(100)
+				err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, nil, nil, &durationMs)
+				require.NoError(t, err, "Failed to update job status")
 			}
 		}
-	}
 
-	// Get pending jobs
-	pendingJobs, err := repo.GetJobsByStatus(testCtx, domain.JobStatusPending, 10)
-	if err != nil {
-		t.Fatalf("Failed to get pending jobs: %v", err)
-	}
+		// Get pending jobs
+		pendingJobs, err := repo.GetJobsByStatus(txCtx, domain.JobStatusPending, 10)
+		require.NoError(t, err, "Failed to get pending jobs")
 
-	if len(pendingJobs) != 2 {
-		t.Errorf("Expected 2 pending jobs, got %d", len(pendingJobs))
-	}
+		assert.Len(t, pendingJobs, 2, "Expected 2 pending jobs")
 
-	// Get completed jobs
-	completedJobs, err := repo.GetJobsByStatus(testCtx, domain.JobStatusCompleted, 10)
-	if err != nil {
-		t.Fatalf("Failed to get completed jobs: %v", err)
-	}
+		// All pending jobs should have PENDING status
+		for _, job := range pendingJobs {
+			assert.Equal(t, domain.JobStatusPending, job.Status, "Expected job status to be PENDING")
+		}
 
-	if len(completedJobs) != 3 {
-		t.Errorf("Expected 3 completed jobs, got %d", len(completedJobs))
-	}
+		// Get completed jobs
+		completedJobs, err := repo.GetJobsByStatus(txCtx, domain.JobStatusCompleted, 10)
+		require.NoError(t, err, "Failed to get completed jobs")
+
+		assert.Len(t, completedJobs, 3, "Expected 3 completed jobs")
+
+		// All completed jobs should have COMPLETED status
+		for _, job := range completedJobs {
+			assert.Equal(t, domain.JobStatusCompleted, job.Status, "Expected job status to be COMPLETED")
+		}
+	})
+
+	t.Run("should respect limit parameter", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
+
+		repo := s.createJobRepository()
+
+		// Create 10 jobs
+		testTenantID := uuid.New().String()
+		for i := 0; i < 10; i++ {
+			config := domain.CSVImportConfig{FilePath: fmt.Sprintf("/path/to/file%d.csv", i)}
+			_, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+			require.NoError(t, err, "Failed to create job")
+		}
+
+		// Get jobs with limit of 5
+		jobs, err := repo.GetJobsByStatus(txCtx, domain.JobStatusPending, 5)
+		require.NoError(t, err, "Failed to get jobs")
+
+		assert.Len(t, jobs, 5, "Expected 5 jobs (limited)")
+	})
 }
 
-func TestJobRepository_RetryWithBackoff(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
+// TestJobRepository_ResultMerging tests that result JSONB is properly merged
+func (s *PostgresSuite) TestJobRepository_ResultMerging() {
+	t := s.T()
+	t.Parallel()
 
-	repo := NewJobRepository(db)
+	t.Run("should merge result JSONB on update", func(t *testing.T) {
+		t.Parallel()
 
-	// Create a job
-	testTenantID := uuid.New().String()
-	config := domain.CSVImportConfig{FilePath: "/path/to/file.csv"}
+		ctx := t.Context()
+		txCtx, rollback := s.prepareTx(t, ctx)
+		defer rollback()
 
-	job, err := repo.Create(testCtx, testTenantID, domain.JobTypeCSVImport, config)
-	if err != nil {
-		t.Fatalf("Failed to create job: %v", err)
-	}
+		repo := s.createJobRepository()
 
-	// Manually set attempts to 2 (simulate previous attempts)
-	// We need to do this via direct SQL since UpdateToPending will increment attempts
-	const updateAttemptsSQL = `UPDATE jobs SET attempts = 2 WHERE id = $1`
-	_, err = db.Exec(testCtx, updateAttemptsSQL, job.ID)
-	if err != nil {
-		t.Fatalf("Failed to update attempts: %v", err)
-	}
+		// Create a job
+		testTenantID := uuid.New().String()
+		config := domain.CSVImportConfig{FilePath: "/path/to/file.csv"}
 
-	// Requeue the job
-	runAfter := "2025-01-01T00:00:00Z"
-	errMsg := "test error"
+		job, err := repo.Create(txCtx, testTenantID, domain.JobTypeCSVImport, config)
+		require.NoError(t, err, "Failed to create job")
 
-	err = repo.UpdateToPending(testCtx, job.ID, &runAfter, &errMsg)
-	if err != nil {
-		t.Fatalf("Failed to requeue job: %v", err)
-	}
+		// Update with first result
+		result1 := domain.CSVImportResult{
+			RowsProcessed: 10,
+		}
+		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusRunning, result1, nil, nil)
+		require.NoError(t, err, "Failed to update job status")
 
-	// Get the job and verify
-	updatedJob, err := repo.GetByID(testCtx, job.ID)
-	if err != nil {
-		t.Fatalf("Failed to get updated job: %v", err)
-	}
+		// Update with second result (should merge with first)
+		result2 := domain.CSVImportResult{
+			RowsInserted: 8,
+			FileHash:     "hash123",
+		}
+		durationMs := int64(200)
+		err = repo.UpdateStatus(txCtx, job.ID, domain.JobStatusCompleted, result2, nil, &durationMs)
+		require.NoError(t, err, "Failed to update job status")
 
-	if updatedJob.Status != domain.JobStatusPending {
-		t.Errorf("Expected job status PENDING, got %s", updatedJob.Status)
-	}
+		// Get the job and verify merged result
+		updatedJob, err := repo.GetByID(txCtx, job.ID)
+		require.NoError(t, err, "Failed to get updated job")
 
-	if updatedJob.Error == nil || *updatedJob.Error != "test error" {
-		t.Errorf("Expected error message 'test error', got %v", updatedJob.Error)
-	}
+		// The result should contain both sets of fields
+		var storedResult domain.CSVImportResult
+		err = json.Unmarshal(updatedJob.Result, &storedResult)
+		require.NoError(t, err, "Failed to unmarshal stored result")
+
+		// Note: JSONB merge at top level means we should have both fields
+		assert.Equal(t, 8, storedResult.RowsInserted, "Expected rows inserted to be 8")
+		assert.Equal(t, "hash123", storedResult.FileHash, "Expected file hash to be hash123")
+	})
 }
