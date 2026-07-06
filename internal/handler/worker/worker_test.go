@@ -26,54 +26,76 @@ func TestProcessJob(t *testing.T) {
 		return nil, errors.New("boom")
 	}
 
+	type fields struct {
+		repo    func(t *testing.T) *mocks.JobRepository
+		handler JobHandler
+	}
+	type args struct {
+		job *domain.Job
+	}
 	tests := []struct {
-		name            string
-		job             *domain.Job
-		registerHandler JobHandler
-		setupMock       func(repo *mocks.JobRepository)
-		checkAfter      func(t *testing.T, repo *mocks.JobRepository)
+		name   string
+		fields fields
+		args   args
+		check  func(t *testing.T, repo *mocks.JobRepository)
 	}{
 		{
 			name: "unknown job type fails the job",
-			job:  &domain.Job{ID: 1, Type: "unregistered_type"},
-			setupMock: func(repo *mocks.JobRepository) {
-				repo.EXPECT().UpdateStatus(mock.Anything, int64(1), domain.JobStatusFailed, nil,
-					mock.MatchedBy(func(s *string) bool { return s != nil && *s == "unknown job type: unregistered_type" }),
-					mock.Anything).Return(nil)
+			fields: fields{
+				repo: func(t *testing.T) *mocks.JobRepository {
+					repo := mocks.NewJobRepository(t)
+					repo.EXPECT().UpdateStatus(mock.Anything, int64(1), domain.JobStatusFailed, nil,
+						mock.MatchedBy(func(s *string) bool { return s != nil && *s == "unknown job type: unregistered_type" }),
+						mock.Anything).Return(nil)
+					return repo
+				},
 			},
+			args: args{job: &domain.Job{ID: 1, Type: "unregistered_type"}},
 		},
 		{
 			name: "handler success completes the job",
-			job:  &domain.Job{ID: 2, Type: testJobType},
-			registerHandler: func(ctx context.Context, config json.RawMessage) (json.RawMessage, error) {
-				return json.RawMessage(`{"ok":true}`), nil
+			fields: fields{
+				repo: func(t *testing.T) *mocks.JobRepository {
+					repo := mocks.NewJobRepository(t)
+					repo.EXPECT().UpdateStatus(mock.Anything, int64(2), domain.JobStatusCompleted, json.RawMessage(`{"ok":true}`),
+						mock.MatchedBy(emptyStringPtr), mock.Anything).Return(nil)
+					return repo
+				},
+				handler: func(ctx context.Context, config json.RawMessage) (json.RawMessage, error) {
+					return json.RawMessage(`{"ok":true}`), nil
+				},
 			},
-			setupMock: func(repo *mocks.JobRepository) {
-				repo.EXPECT().UpdateStatus(mock.Anything, int64(2), domain.JobStatusCompleted, json.RawMessage(`{"ok":true}`),
-					mock.MatchedBy(emptyStringPtr), mock.Anything).Return(nil)
-			},
+			args: args{job: &domain.Job{ID: 2, Type: testJobType}},
 		},
 		{
-			name:            "handler error with retries left requeues instead of failing",
-			job:             &domain.Job{ID: 3, Type: testJobType, Attempts: 1, MaxAttempts: 3},
-			registerHandler: failingHandler,
-			setupMock: func(repo *mocks.JobRepository) {
-				repo.EXPECT().UpdateToPending(mock.Anything, int64(3), mock.Anything,
-					mock.MatchedBy(func(s *string) bool { return s != nil && *s == "boom" })).Return(nil)
+			name: "handler error with retries left requeues instead of failing",
+			fields: fields{
+				repo: func(t *testing.T) *mocks.JobRepository {
+					repo := mocks.NewJobRepository(t)
+					repo.EXPECT().UpdateToPending(mock.Anything, int64(3), mock.Anything,
+						mock.MatchedBy(func(s *string) bool { return s != nil && *s == "boom" })).Return(nil)
+					return repo
+				},
+				handler: failingHandler,
 			},
-			checkAfter: func(t *testing.T, repo *mocks.JobRepository) {
+			args: args{job: &domain.Job{ID: 3, Type: testJobType, Attempts: 1, MaxAttempts: 3}},
+			check: func(t *testing.T, repo *mocks.JobRepository) {
 				repo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 			},
 		},
 		{
-			name:            "handler error with attempts exhausted fails the job",
-			job:             &domain.Job{ID: 4, Type: testJobType, Attempts: 3, MaxAttempts: 3},
-			registerHandler: failingHandler,
-			setupMock: func(repo *mocks.JobRepository) {
-				repo.EXPECT().UpdateStatus(mock.Anything, int64(4), domain.JobStatusFailed, nil,
-					mock.MatchedBy(func(s *string) bool { return s != nil && *s == "boom" }), mock.Anything).Return(nil)
+			name: "handler error with attempts exhausted fails the job",
+			fields: fields{
+				repo: func(t *testing.T) *mocks.JobRepository {
+					repo := mocks.NewJobRepository(t)
+					repo.EXPECT().UpdateStatus(mock.Anything, int64(4), domain.JobStatusFailed, nil,
+						mock.MatchedBy(func(s *string) bool { return s != nil && *s == "boom" }), mock.Anything).Return(nil)
+					return repo
+				},
+				handler: failingHandler,
 			},
-			checkAfter: func(t *testing.T, repo *mocks.JobRepository) {
+			args: args{job: &domain.Job{ID: 4, Type: testJobType, Attempts: 3, MaxAttempts: 3}},
+			check: func(t *testing.T, repo *mocks.JobRepository) {
 				repo.AssertNotCalled(t, "UpdateToPending", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 			},
 		},
@@ -81,17 +103,16 @@ func TestProcessJob(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := mocks.NewJobRepository(t)
+			repo := tt.fields.repo(t)
 			w := NewWorker(nil, repo)
-			if tt.registerHandler != nil {
-				w.RegisterHandler(testJobType, tt.registerHandler)
+			if tt.fields.handler != nil {
+				w.RegisterHandler(testJobType, tt.fields.handler)
 			}
-			tt.setupMock(repo)
 
-			w.processJob(context.Background(), tt.job)
+			w.processJob(context.Background(), tt.args.job)
 
-			if tt.checkAfter != nil {
-				tt.checkAfter(t, repo)
+			if tt.check != nil {
+				tt.check(t, repo)
 			}
 		})
 	}
