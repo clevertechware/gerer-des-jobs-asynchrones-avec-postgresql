@@ -61,7 +61,7 @@ func NewWorker(db *pgxpool.Pool, repo repository.JobRepository, opts ...WorkerOp
 		handlers:     make(map[domain.JobType]JobHandler),
 		workerID:     uuid.New(),
 		batchSize:    5,
-		pollInterval: 100 * time.Millisecond,
+		pollInterval: 1 * time.Second,
 		concurrency:  1,
 	}
 
