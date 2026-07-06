@@ -4,7 +4,7 @@ disable-func-mocks: true
 dir: "{{.InterfaceDir}}/mocks"
 outpkg: mocks
 filename: "{{.InterfaceName | snakecase}}.go"
-mockname: "{{.InterfaceName}}"
+mockname: "{{.InterfaceName | camelcase}}"
 packages:
   github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql:
     config:

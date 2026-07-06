@@ -14,8 +14,7 @@ import (
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
 )
 
-// JobRepository defines the job persistence operations the worker needs
-type JobRepository interface {
+type jobRepository interface {
 	// Dequeue retrieves and locks a batch of pending jobs for processing
 	// The jobs are automatically marked as RUNNING and their started_at timestamp is set
 	Dequeue(ctx context.Context, batchSize int) ([]*domain.Job, error)
@@ -33,7 +32,7 @@ type JobHandler func(ctx context.Context, config json.RawMessage) (json.RawMessa
 // Worker processes jobs from the queue
 type Worker struct {
 	db           *pgxpool.Pool
-	repo         JobRepository
+	repo         jobRepository
 	handlers     map[domain.JobType]JobHandler
 	workerID     uuid.UUID
 	batchSize    int
@@ -66,7 +65,7 @@ func WithConcurrency(n int) WorkerOption {
 }
 
 // NewWorker creates a new Worker
-func NewWorker(db *pgxpool.Pool, repo JobRepository, opts ...WorkerOption) *Worker {
+func NewWorker(db *pgxpool.Pool, repo jobRepository, opts ...WorkerOption) *Worker {
 	w := &Worker{
 		db:           db,
 		repo:         repo,

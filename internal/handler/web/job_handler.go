@@ -16,8 +16,7 @@ import (
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
 )
 
-// JobRepository defines the job persistence operations the web handlers need
-type JobRepository interface {
+type jobRepository interface {
 	// Create creates a new job and returns it with assigned ID
 	Create(ctx context.Context, tenantID string, jobType domain.JobType, config interface{}) (*domain.Job, error)
 
@@ -33,12 +32,12 @@ type JobRepository interface {
 
 // JobHandler handles HTTP requests for job management
 type JobHandler struct {
-	repo      JobRepository
+	repo      jobRepository
 	uploadDir string
 }
 
 // NewJobHandler creates a new JobHandler
-func NewJobHandler(repo JobRepository, uploadDir string) *JobHandler {
+func NewJobHandler(repo jobRepository, uploadDir string) *JobHandler {
 	return &JobHandler{
 		repo:      repo,
 		uploadDir: uploadDir,
