@@ -1,7 +1,7 @@
 with-expecter: true
 dir: "{{.InterfaceDir}}/mocks"
 outpkg: mocks
-filename: "{{.InterfaceName}}.go"
+filename: "{{.InterfaceName | snakecase}}.go"
 mockname: "{{.InterfaceName}}"
 packages:
   github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/web:
