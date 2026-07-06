@@ -3,7 +3,6 @@ package web
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -143,7 +142,7 @@ func TestUploadCSVFile(t *testing.T) {
 				repo: func(t *testing.T, tenantID string) *mocks.JobRepository {
 					repo := mocks.NewJobRepository(t)
 					repo.EXPECT().Create(mock.Anything, tenantID, domain.JobTypeCSVImport, mock.Anything).
-						Return(nil, errors.New("db down"))
+						Return(nil, assert.AnError)
 					return repo
 				},
 			},
@@ -208,7 +207,7 @@ func TestGetJob(t *testing.T) {
 			fields: fields{
 				repo: func(t *testing.T) *mocks.JobRepository {
 					repo := mocks.NewJobRepository(t)
-					repo.EXPECT().GetByID(mock.Anything, int64(7)).Return(nil, errors.New("not found"))
+					repo.EXPECT().GetByID(mock.Anything, int64(7)).Return(nil, assert.AnError)
 					return repo
 				},
 			},
@@ -303,7 +302,7 @@ func TestGetJobStats(t *testing.T) {
 			fields: fields{
 				repo: func(t *testing.T) *mocks.JobRepository {
 					repo := mocks.NewJobRepository(t)
-					repo.EXPECT().GetQueueStats(mock.Anything).Return(nil, errors.New("boom"))
+					repo.EXPECT().GetQueueStats(mock.Anything).Return(nil, assert.AnError)
 					return repo
 				},
 			},

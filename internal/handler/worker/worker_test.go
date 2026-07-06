@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
@@ -23,7 +24,7 @@ const testJobType domain.JobType = "test_type"
 
 func TestProcessJob(t *testing.T) {
 	failingHandler := func(ctx context.Context, config json.RawMessage) (json.RawMessage, error) {
-		return nil, errors.New("boom")
+		return nil, assert.AnError
 	}
 
 	type fields struct {
@@ -73,7 +74,8 @@ func TestProcessJob(t *testing.T) {
 				repo: func(t *testing.T) *mocks.JobRepository {
 					repo := mocks.NewJobRepository(t)
 					repo.EXPECT().UpdateToPending(mock.Anything, int64(3), mock.Anything,
-						mock.MatchedBy(func(s *string) bool { return s != nil && *s == "boom" })).Return(nil)
+						mock.MatchedBy(func(s *string) bool { return s != nil && *s == assert.AnError.Error() })).
+						Return(nil)
 					return repo
 				},
 				handler: failingHandler,
@@ -89,7 +91,8 @@ func TestProcessJob(t *testing.T) {
 				repo: func(t *testing.T) *mocks.JobRepository {
 					repo := mocks.NewJobRepository(t)
 					repo.EXPECT().UpdateStatus(mock.Anything, int64(4), domain.JobStatusFailed, nil,
-						mock.MatchedBy(func(s *string) bool { return s != nil && *s == "boom" }), mock.Anything).Return(nil)
+						mock.MatchedBy(func(s *string) bool { return s != nil && *s == assert.AnError.Error() }), mock.Anything).
+						Return(nil)
 					return repo
 				},
 				handler: failingHandler,
@@ -166,7 +169,7 @@ func TestRequeueJobBackoff(t *testing.T) {
 
 			job := &domain.Job{ID: 9, Attempts: tt.attempts}
 			before := time.Now()
-			w.requeueJob(context.Background(), job, errors.New("boom"), time.Now())
+			w.requeueJob(context.Background(), job, assert.AnError, time.Now())
 
 			got, err := time.Parse(time.RFC3339, capturedRunAfter)
 			require.NoError(t, err)
@@ -183,10 +186,10 @@ func TestRequeueJobBackoff(t *testing.T) {
 		repo.EXPECT().UpdateToPending(mock.Anything, int64(10), mock.Anything, mock.Anything).
 			Return(errors.New("update failed"))
 		repo.EXPECT().UpdateStatus(mock.Anything, int64(10), domain.JobStatusFailed, nil,
-			mock.MatchedBy(func(s *string) bool { return s != nil && *s == "boom" }), mock.Anything).
+			mock.MatchedBy(func(s *string) bool { return s != nil && *s == assert.AnError.Error() }), mock.Anything).
 			Return(nil)
 
 		job := &domain.Job{ID: 10, Attempts: 1}
-		w.requeueJob(context.Background(), job, errors.New("boom"), time.Now())
+		w.requeueJob(context.Background(), job, assert.AnError, time.Now())
 	})
 }
