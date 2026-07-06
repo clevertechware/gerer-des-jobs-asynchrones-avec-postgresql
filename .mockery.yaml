@@ -1,13 +1,14 @@
 with-expecter: true
 exported: true
+disable-func-mocks: true
 dir: "{{.InterfaceDir}}/mocks"
 outpkg: mocks
 filename: "{{.InterfaceName | snakecase}}.go"
 mockname: "{{.InterfaceName}}"
 packages:
-  github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/web:
-    interfaces:
-      JobRepository:
-  github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/worker:
-    interfaces:
-      JobRepository:
+  github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql:
+    config:
+      all: true
+      recursive: true
+      dir: '{{.InterfaceDir}}/mocks'
+
