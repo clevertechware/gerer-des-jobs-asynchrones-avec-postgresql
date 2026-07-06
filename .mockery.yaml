@@ -1,4 +1,5 @@
 with-expecter: true
+exported: true
 dir: "{{.InterfaceDir}}/mocks"
 outpkg: mocks
 filename: "{{.InterfaceName | snakecase}}.go"
