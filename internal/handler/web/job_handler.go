@@ -20,15 +20,13 @@ import (
 type JobHandler struct {
 	repo      repository.JobRepository
 	uploadDir string
-	baseURL   string
 }
 
 // NewJobHandler creates a new JobHandler
-func NewJobHandler(repo repository.JobRepository, uploadDir, baseURL string) *JobHandler {
+func NewJobHandler(repo repository.JobRepository, uploadDir string) *JobHandler {
 	return &JobHandler{
 		repo:      repo,
 		uploadDir: uploadDir,
-		baseURL:   baseURL,
 	}
 }
 
@@ -207,19 +205,16 @@ func (h *JobHandler) ListJobs(c *gin.Context) {
 		limitInt = 50
 	}
 
-	var jobStatus domain.JobStatus
-	switch status {
-	case "PENDING":
-		jobStatus = domain.JobStatusPending
-	case "RUNNING":
-		jobStatus = domain.JobStatusRunning
-	case "COMPLETED":
-		jobStatus = domain.JobStatusCompleted
-	case "COMPLETED_WITH_ERRORS":
-		jobStatus = domain.JobStatusCompletedWithErr
-	case "FAILED":
-		jobStatus = domain.JobStatusFailed
-	default:
+	knownStatuses := map[domain.JobStatus]bool{
+		domain.JobStatusPending:          true,
+		domain.JobStatusRunning:          true,
+		domain.JobStatusCompleted:        true,
+		domain.JobStatusCompletedWithErr: true,
+		domain.JobStatusFailed:           true,
+	}
+
+	jobStatus := domain.JobStatus(status)
+	if !knownStatuses[jobStatus] {
 		jobStatus = domain.JobStatusPending
 	}
 

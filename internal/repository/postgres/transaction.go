@@ -2,15 +2,12 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
-
-var TxNotFoundErr = errors.New("transaction not found")
 
 // PGClient is the interface for a PostgreSQL client.
 type PGClient interface {

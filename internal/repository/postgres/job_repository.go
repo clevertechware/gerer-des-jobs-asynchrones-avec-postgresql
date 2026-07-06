@@ -9,6 +9,7 @@ import (
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // JobRepository implements repository.JobRepository using PostgreSQL
@@ -19,6 +20,38 @@ type JobRepository struct {
 // NewJobRepository creates a new JobRepository
 func NewJobRepository(txManager *PGTxManager) repository.JobRepository {
 	return &JobRepository{txManager: txManager}
+}
+
+// jobColumns is the shared column list for SELECT/UPDATE...RETURNING queries against jobs,
+// in the order scanJob expects them.
+const jobColumns = "id, tenant_id, type, status, operated_by, config, result, error, trace_id, started_at, finished_at, duration_ms, created_at, updated_at, run_after, attempts, max_attempts"
+
+// scanJob scans a single row (from QueryRow or Query.Next) into a domain.Job, matching jobColumns.
+func scanJob(row pgx.Row) (*domain.Job, error) {
+	var job domain.Job
+	err := row.Scan(
+		&job.ID,
+		&job.TenantID,
+		&job.Type,
+		&job.Status,
+		&job.OperatedBy,
+		&job.Config,
+		&job.Result,
+		&job.Error,
+		&job.TraceID,
+		&job.StartedAt,
+		&job.FinishedAt,
+		&job.DurationMs,
+		&job.CreatedAt,
+		&job.UpdatedAt,
+		&job.RunAfter,
+		&job.Attempts,
+		&job.MaxAttempts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &job, nil
 }
 
 // Create creates a new job and returns it with assigned ID
@@ -68,44 +101,25 @@ func (r *JobRepository) Create(ctx context.Context, tenantID string, jobType dom
 
 // GetByID retrieves a job by its ID
 func (r *JobRepository) GetByID(ctx context.Context, id int64) (*domain.Job, error) {
-	const query = `
-		SELECT id, tenant_id, type, status, operated_by, config, result, error, trace_id, started_at, finished_at, duration_ms, created_at, updated_at, run_after, attempts, max_attempts
+	query := fmt.Sprintf(`
+		SELECT %s
 		FROM jobs
 		WHERE id = $1
-	`
+	`, jobColumns)
 
 	pgClient := r.txManager.GetClient(ctx)
-	var job domain.Job
-	err := pgClient.QueryRow(ctx, query, id).Scan(
-		&job.ID,
-		&job.TenantID,
-		&job.Type,
-		&job.Status,
-		&job.OperatedBy,
-		&job.Config,
-		&job.Result,
-		&job.Error,
-		&job.TraceID,
-		&job.StartedAt,
-		&job.FinishedAt,
-		&job.DurationMs,
-		&job.CreatedAt,
-		&job.UpdatedAt,
-		&job.RunAfter,
-		&job.Attempts,
-		&job.MaxAttempts,
-	)
+	job, err := scanJob(pgClient.QueryRow(ctx, query, id))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get job: %w", err)
 	}
 
-	return &job, nil
+	return job, nil
 }
 
 // Dequeue retrieves and locks a batch of pending jobs for processing
 // Uses FOR UPDATE SKIP LOCKED to ensure jobs are only processed once
 func (r *JobRepository) Dequeue(ctx context.Context, batchSize int) ([]*domain.Job, error) {
-	const query = `
+	query := fmt.Sprintf(`
 		UPDATE jobs
 		SET status = 'RUNNING',
 		    started_at = now(),
@@ -120,8 +134,8 @@ func (r *JobRepository) Dequeue(ctx context.Context, batchSize int) ([]*domain.J
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
 		)
-		RETURNING id, tenant_id, type, status, operated_by, config, result, error, trace_id, started_at, finished_at, duration_ms, created_at, updated_at, run_after, attempts, max_attempts
-	`
+		RETURNING %s
+	`, jobColumns)
 
 	pgClient := r.txManager.GetClient(ctx)
 	rows, err := pgClient.Query(ctx, query, batchSize)
@@ -130,32 +144,13 @@ func (r *JobRepository) Dequeue(ctx context.Context, batchSize int) ([]*domain.J
 	}
 	defer rows.Close()
 
-	var jobs []*domain.Job
+	jobs := make([]*domain.Job, 0, batchSize)
 	for rows.Next() {
-		var job domain.Job
-		err = rows.Scan(
-			&job.ID,
-			&job.TenantID,
-			&job.Type,
-			&job.Status,
-			&job.OperatedBy,
-			&job.Config,
-			&job.Result,
-			&job.Error,
-			&job.TraceID,
-			&job.StartedAt,
-			&job.FinishedAt,
-			&job.DurationMs,
-			&job.CreatedAt,
-			&job.UpdatedAt,
-			&job.RunAfter,
-			&job.Attempts,
-			&job.MaxAttempts,
-		)
+		job, err := scanJob(rows)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan job: %w", err)
 		}
-		jobs = append(jobs, &job)
+		jobs = append(jobs, job)
 	}
 
 	if err = rows.Err(); err != nil {
@@ -277,13 +272,13 @@ func (r *JobRepository) GetQueueStats(ctx context.Context) (*domain.QueueStats, 
 
 // GetJobsByStatus returns jobs filtered by status
 func (r *JobRepository) GetJobsByStatus(ctx context.Context, status domain.JobStatus, limit int) ([]*domain.Job, error) {
-	const query = `
-		SELECT id, tenant_id, type, status, operated_by, config, result, error, trace_id, started_at, finished_at, duration_ms, created_at, updated_at, run_after, attempts, max_attempts
+	query := fmt.Sprintf(`
+		SELECT %s
 		FROM jobs
 		WHERE status = $1
 		ORDER BY created_at DESC
 		LIMIT $2
-	`
+	`, jobColumns)
 
 	pgClient := r.txManager.GetClient(ctx)
 	rows, err := pgClient.Query(ctx, query, status, limit)
@@ -292,32 +287,13 @@ func (r *JobRepository) GetJobsByStatus(ctx context.Context, status domain.JobSt
 	}
 	defer rows.Close()
 
-	var jobs []*domain.Job
+	jobs := make([]*domain.Job, 0, limit)
 	for rows.Next() {
-		var job domain.Job
-		err = rows.Scan(
-			&job.ID,
-			&job.TenantID,
-			&job.Type,
-			&job.Status,
-			&job.OperatedBy,
-			&job.Config,
-			&job.Result,
-			&job.Error,
-			&job.TraceID,
-			&job.StartedAt,
-			&job.FinishedAt,
-			&job.DurationMs,
-			&job.CreatedAt,
-			&job.UpdatedAt,
-			&job.RunAfter,
-			&job.Attempts,
-			&job.MaxAttempts,
-		)
+		job, err := scanJob(rows)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan job: %w", err)
 		}
-		jobs = append(jobs, &job)
+		jobs = append(jobs, job)
 	}
 
 	if err = rows.Err(); err != nil {

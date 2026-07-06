@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -94,6 +93,9 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 
 	// Start dequeue loop
+	ticker := time.NewTicker(w.pollInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -102,7 +104,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			log.Printf("Worker %s stopped", w.workerID)
 			return nil
 
-		case <-time.After(w.pollInterval):
+		case <-ticker.C:
 			// Dequeue jobs
 			jobs, err := w.repo.Dequeue(ctx, w.batchSize)
 			if err != nil {
@@ -140,9 +142,6 @@ func (w *Worker) processWorker(ctx context.Context, wg *sync.WaitGroup, jobChan 
 // processJob processes a single job
 func (w *Worker) processJob(ctx context.Context, job *domain.Job) {
 	start := time.Now()
-
-	// Mark job as being processed by this worker
-	job.OperatedBy = &w.workerID
 
 	// Get handler for job type
 	handler, ok := w.handlers[job.Type]
@@ -257,6 +256,3 @@ func (w *Worker) reapStuckJobs(ctx context.Context, maxDuration time.Duration) {
 		log.Printf("Reaped %d stuck jobs", count)
 	}
 }
-
-// ErrJobNotRegistered is returned when trying to start a worker without handlers
-var ErrJobNotRegistered = errors.New("no handlers registered for any job type")

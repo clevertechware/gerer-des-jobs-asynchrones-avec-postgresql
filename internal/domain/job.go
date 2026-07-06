@@ -61,6 +61,9 @@ type CSVImportResult struct {
 	RowsSkipped   int      `json:"rows_skipped"`
 	Errors        []string `json:"errors,omitempty"`
 	FileHash      string   `json:"file_hash"`
+	FileName      string   `json:"file_name"`
+	StartTime     string   `json:"start_time"`
+	EndTime       string   `json:"end_time"`
 }
 
 // JobStats contains statistics for a job type

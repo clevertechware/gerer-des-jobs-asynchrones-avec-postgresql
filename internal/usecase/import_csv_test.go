@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
 )
 
 func TestCSVImportUsecase_Process(t *testing.T) {
@@ -16,8 +18,8 @@ func TestCSVImportUsecase_Process(t *testing.T) {
 	tests := []struct {
 		name           string
 		csvContent     string
-		config         ImportCSVConfig
-		expectedResult func(*ImportCSVResult) bool
+		config         domain.CSVImportConfig
+		expectedResult func(*domain.CSVImportResult) bool
 		expectError    bool
 	}{
 		{
@@ -26,11 +28,11 @@ func TestCSVImportUsecase_Process(t *testing.T) {
 John,25,NYC
 Jane,30,LA
 Bob,35,Chicago`,
-			config: ImportCSVConfig{
+			config: domain.CSVImportConfig{
 				Delimiter: ",",
 				HasHeader: true,
 			},
-			expectedResult: func(r *ImportCSVResult) bool {
+			expectedResult: func(r *domain.CSVImportResult) bool {
 				// 4 lines total: header + 3 data rows
 				return r.RowsProcessed == 4 && r.RowsInserted == 4 && len(r.Errors) == 0
 			},
@@ -41,11 +43,11 @@ Bob,35,Chicago`,
 			csvContent: `John,25,NYC
 Jane,30,LA
 Bob,35,Chicago`,
-			config: ImportCSVConfig{
+			config: domain.CSVImportConfig{
 				Delimiter: ",",
 				HasHeader: false,
 			},
-			expectedResult: func(r *ImportCSVResult) bool {
+			expectedResult: func(r *domain.CSVImportResult) bool {
 				return r.RowsProcessed == 3 && r.RowsInserted == 3 && len(r.Errors) == 0
 			},
 			expectError: false,
@@ -55,11 +57,11 @@ Bob,35,Chicago`,
 			csvContent: `name;age;city
 John;25;NYC
 Jane;30;LA`,
-			config: ImportCSVConfig{
+			config: domain.CSVImportConfig{
 				Delimiter: ";",
 				HasHeader: true,
 			},
-			expectedResult: func(r *ImportCSVResult) bool {
+			expectedResult: func(r *domain.CSVImportResult) bool {
 				// 3 lines total: header + 2 data rows
 				return r.RowsProcessed == 3 && r.RowsInserted == 3 && len(r.Errors) == 0
 			},
@@ -73,11 +75,11 @@ John,25,NYC
 Jane,30,LA
 
 Bob,35,Chicago`,
-			config: ImportCSVConfig{
+			config: domain.CSVImportConfig{
 				Delimiter: ",",
 				HasHeader: true,
 			},
-			expectedResult: func(r *ImportCSVResult) bool {
+			expectedResult: func(r *domain.CSVImportResult) bool {
 				// Go's encoding/csv reader skips empty lines by default
 				// So we get 4 records: header + 3 data rows (empty lines are ignored)
 				// All valid rows are inserted
@@ -89,11 +91,11 @@ Bob,35,Chicago`,
 			name: "CSV with all empty fields",
 			csvContent: `,,,
 ,,,`,
-			config: ImportCSVConfig{
+			config: domain.CSVImportConfig{
 				Delimiter: ",",
 				HasHeader: false,
 			},
-			expectedResult: func(r *ImportCSVResult) bool {
+			expectedResult: func(r *domain.CSVImportResult) bool {
 				// Should skip all-empty records
 				return r.RowsSkipped == 2 && r.RowsInserted == 0
 			},
@@ -102,11 +104,11 @@ Bob,35,Chicago`,
 		{
 			name:       "empty CSV file",
 			csvContent: "",
-			config: ImportCSVConfig{
+			config: domain.CSVImportConfig{
 				Delimiter: ",",
 				HasHeader: true,
 			},
-			expectedResult: func(r *ImportCSVResult) bool {
+			expectedResult: func(r *domain.CSVImportResult) bool {
 				return r.RowsProcessed == 0 && r.RowsInserted == 0
 			},
 			expectError: false,
@@ -114,7 +116,7 @@ Bob,35,Chicago`,
 		{
 			name:       "missing file path",
 			csvContent: "test",
-			config: ImportCSVConfig{
+			config: domain.CSVImportConfig{
 				FilePath:  "",
 				Delimiter: ",",
 				HasHeader: true,
@@ -170,7 +172,7 @@ Bob,35,Chicago`,
 			}
 
 			// Unmarshal result
-			var result ImportCSVResult
+			var result domain.CSVImportResult
 			if err := json.Unmarshal(resultJSON, &result); err != nil {
 				t.Fatalf("Failed to unmarshal result: %v", err)
 			}
@@ -197,7 +199,7 @@ Jane,30,LA`
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	config := ImportCSVConfig{
+	config := domain.CSVImportConfig{
 		FilePath:  filePath,
 		Delimiter: ",",
 		HasHeader: true,
@@ -214,7 +216,7 @@ Jane,30,LA`
 		t.Fatalf("First processing failed: %v", err)
 	}
 
-	var firstResult ImportCSVResult
+	var firstResult domain.CSVImportResult
 	if err := json.Unmarshal(firstResultJSON, &firstResult); err != nil {
 		t.Fatalf("Failed to unmarshal first result: %v", err)
 	}
@@ -225,7 +227,7 @@ Jane,30,LA`
 		t.Fatalf("Second processing failed: %v", err)
 	}
 
-	var secondResult ImportCSVResult
+	var secondResult domain.CSVImportResult
 	if err := json.Unmarshal(secondResultJSON, &secondResult); err != nil {
 		t.Fatalf("Failed to unmarshal second result: %v", err)
 	}
@@ -263,8 +265,8 @@ Jane,30`
 	}
 
 	// Process both files with separate usecase instances
-	config1 := ImportCSVConfig{FilePath: file1, Delimiter: ",", HasHeader: true}
-	config2 := ImportCSVConfig{FilePath: file2, Delimiter: ",", HasHeader: true}
+	config1 := domain.CSVImportConfig{FilePath: file1, Delimiter: ",", HasHeader: true}
+	config2 := domain.CSVImportConfig{FilePath: file2, Delimiter: ",", HasHeader: true}
 
 	config1JSON, _ := json.Marshal(config1)
 	config2JSON, _ := json.Marshal(config2)
@@ -281,7 +283,7 @@ Jane,30`
 		t.Fatalf("Failed to process file2: %v", err)
 	}
 
-	var result1, result2 ImportCSVResult
+	var result1, result2 domain.CSVImportResult
 	if err := json.Unmarshal(result1JSON, &result1); err != nil {
 		t.Fatalf("Failed to unmarshal result1: %v", err)
 	}

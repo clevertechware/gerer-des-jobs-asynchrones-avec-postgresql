@@ -16,6 +16,7 @@ import (
 
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/config"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/database"
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/web"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/worker"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository/postgres"
@@ -74,7 +75,7 @@ func main() {
 	csvUsecase := usecase.NewCSVImportUsecase(cfg.UploadDir)
 
 	// Create web handlers
-	jobHandler := web.NewJobHandler(jobRepo, cfg.UploadDir, "")
+	jobHandler := web.NewJobHandler(jobRepo, cfg.UploadDir)
 
 	// Create worker
 	w := worker.NewWorker(
@@ -86,7 +87,7 @@ func main() {
 	)
 
 	// Register handlers
-	w.RegisterHandler("csv_import", csvUsecase.GetJobHandler())
+	w.RegisterHandler(domain.JobTypeCSVImport, csvUsecase.GetJobHandler())
 
 	// Create HTTP server
 	router := gin.Default()

@@ -114,8 +114,16 @@ func LoadConfig() (*Config, error) {
 	return cfg, nil
 }
 
-// GetDSN returns the PostgreSQL connection string
+// GetDSN returns the PostgreSQL connection string (keyword/value form, for pgxpool)
 func (c *Config) GetDSN() string {
 	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		c.DBHost, c.DBPort, c.DBUser, c.DBPassword, c.DBName, c.DBSSLMode)
+}
+
+// GetMigrationDSN returns the connection string in the pgx5:// URL form golang-migrate expects
+func (c *Config) GetMigrationDSN() string {
+	return fmt.Sprintf(
+		"pgx5://%s:%s@%s:%d/%s?sslmode=%s&x-migrations-table=schema_migrations",
+		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName, c.DBSSLMode,
+	)
 }

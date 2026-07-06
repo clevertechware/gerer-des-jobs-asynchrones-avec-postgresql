@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
 )
 
 // CSVImportUsecase handles CSV import business logic
@@ -30,30 +32,10 @@ func NewCSVImportUsecase(uploadDir string) *CSVImportUsecase {
 	}
 }
 
-// ImportCSVConfig contains configuration for CSV import
-type ImportCSVConfig struct {
-	FilePath    string `json:"file_path"`
-	Delimiter   string `json:"delimiter"`
-	HasHeader   bool   `json:"has_header"`
-	TargetTable string `json:"target_table,omitempty"`
-}
-
-// ImportCSVResult contains the result of a CSV import
-type ImportCSVResult struct {
-	RowsProcessed int      `json:"rows_processed"`
-	RowsInserted  int      `json:"rows_inserted"`
-	RowsSkipped   int      `json:"rows_skipped"`
-	Errors        []string `json:"errors,omitempty"`
-	FileHash      string   `json:"file_hash"`
-	FileName      string   `json:"file_name"`
-	StartTime     string   `json:"start_time"`
-	EndTime       string   `json:"end_time"`
-}
-
 // Process processes a CSV import job
 // It reads the CSV file, parses it, and returns processing results
 func (uc *CSVImportUsecase) Process(ctx context.Context, configJSON json.RawMessage) (json.RawMessage, error) {
-	var config ImportCSVConfig
+	var config domain.CSVImportConfig
 	if err := json.Unmarshal(configJSON, &config); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
@@ -70,53 +52,59 @@ func (uc *CSVImportUsecase) Process(ctx context.Context, configJSON json.RawMess
 
 	startTime := time.Now()
 
-	// Calculate file hash for idempotency
-	fileHash, err := uc.calculateFileHash(config.FilePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to calculate file hash: %w", err)
-	}
-
-	// Check if file already processed (idempotency)
-	if uc.processedFiles[fileHash] {
-		result := ImportCSVResult{
-			FileHash:  fileHash,
-			FileName:  filepath.Base(config.FilePath),
-			StartTime: startTime.Format(time.RFC3339),
-			EndTime:   time.Now().Format(time.RFC3339),
-			Errors:    []string{"file already processed"},
-		}
-		return json.Marshal(result)
-	}
-
-	// Open the CSV file
+	// Open the file once: hash it for idempotency, then reuse the handle to parse the CSV
+	// if it turns out to be new (avoids a second os.Open + full read on the common path).
 	file, err := os.Open(config.FilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open CSV file: %w", err)
 	}
 	defer file.Close()
 
-	// Parse the CSV
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return nil, fmt.Errorf("failed to calculate file hash: %w", err)
+	}
+	fileHash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Check if file already processed (idempotency)
+	if uc.processedFiles[fileHash] {
+		return json.Marshal(domain.CSVImportResult{
+			FileHash:  fileHash,
+			FileName:  filepath.Base(config.FilePath),
+			StartTime: startTime.Format(time.RFC3339),
+			EndTime:   time.Now().Format(time.RFC3339),
+			Errors:    []string{"file already processed"},
+		})
+	}
+
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("failed to rewind CSV file: %w", err)
+	}
+
 	reader := csv.NewReader(file)
 	reader.Comma = rune(config.Delimiter[0])
 	if !config.HasHeader {
 		reader.FieldsPerRecord = -1 // Allow variable number of fields
 	}
 
-	// Read all records
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CSV: %w", err)
-	}
-
-	var result ImportCSVResult
+	var result domain.CSVImportResult
 	result.FileHash = fileHash
 	result.FileName = filepath.Base(config.FilePath)
 	result.StartTime = startTime.Format(time.RFC3339)
-	result.RowsProcessed = len(records)
 
-	// Process records (simulate inserting into database)
+	// Process records one at a time (simulate inserting into database)
 	var errors []string
-	for i, record := range records {
+	for i := 0; ; i++ {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CSV: %w", err)
+		}
+
+		result.RowsProcessed++
+
 		// Skip empty records
 		if len(record) == 0 {
 			result.RowsSkipped++
@@ -124,7 +112,7 @@ func (uc *CSVImportUsecase) Process(ctx context.Context, configJSON json.RawMess
 		}
 
 		// Validate record (example validation)
-		if err = uc.validateRecord(record, i+1); err != nil {
+		if err := uc.validateRecord(record, i+1); err != nil {
 			errors = append(errors, err.Error())
 			result.RowsSkipped++
 			continue
@@ -144,25 +132,8 @@ func (uc *CSVImportUsecase) Process(ctx context.Context, configJSON json.RawMess
 	return json.Marshal(result)
 }
 
-// calculateFileHash calculates SHA256 hash of a file for idempotency
-func (uc *CSVImportUsecase) calculateFileHash(filePath string) (string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
 // validateRecord validates a CSV record
 func (uc *CSVImportUsecase) validateRecord(record []string, lineNum int) error {
-	slog.Info("Validating records", "record", record)
 	// Basic validation: ensure record is not empty and fields are not all empty
 	if len(record) == 0 {
 		return fmt.Errorf("line %d: empty record", lineNum)

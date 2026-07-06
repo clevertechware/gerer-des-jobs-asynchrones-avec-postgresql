@@ -15,9 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/tracelog"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
 	postgresModule "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/config"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/database"
@@ -278,22 +276,5 @@ func CleanupJobsTable(t *testing.T) error {
 	defer cancel()
 
 	_, err := pool.Exec(ctx, "TRUNCATE TABLE jobs RESTART IDENTITY CASCADE")
-	return err
-}
-
-// EnsureTestcontainers ensures Testcontainers is properly set up.
-// Returns an error if Docker is not available.
-func EnsureTestcontainers() error {
-	ctx := context.Background()
-	_, err := testcontainers.GenericContainer(ctx,
-		testcontainers.GenericContainerRequest{
-			ContainerRequest: testcontainers.ContainerRequest{
-				Image:      "alpine:latest",
-				Cmd:        []string{"true"},
-				WaitingFor: wait.ForExit().WithPollInterval(1 * time.Second),
-			},
-			Started: true,
-		},
-	)
 	return err
 }

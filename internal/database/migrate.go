@@ -15,16 +15,7 @@ import (
 // RunMigrations runs database migrations in a single transaction
 func RunMigrations(cfg *config.Config, migrationsPath string) error {
 	// Build DSN for migrate (using pgx5 driver)
-	// Format: pgx5://user:password@host:port/database?sslmode=disable&x-migrations-table=schema_migrations
-	dsn := fmt.Sprintf(
-		"pgx5://%s:%s@%s:%d/%s?sslmode=%s&x-migrations-table=schema_migrations",
-		cfg.DBUser,
-		cfg.DBPassword,
-		cfg.DBHost,
-		cfg.DBPort,
-		cfg.DBName,
-		cfg.DBSSLMode,
-	)
+	dsn := cfg.GetMigrationDSN()
 
 	// Create migrate instance
 	m, err := migrate.New(
