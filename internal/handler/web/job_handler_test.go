@@ -48,195 +48,229 @@ func buildUploadRequest(t *testing.T, url string, includeFile bool, fileContent 
 }
 
 func TestUploadCSVFile(t *testing.T) {
-	t.Run("non-multipart body returns 400", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
+	tests := []struct {
+		name             string
+		buildRequest     func(t *testing.T, tenantID string) *http.Request
+		setupMock        func(repo *mocks.JobRepository, tenantID string)
+		wantStatus       int
+		wantBodyContains string
+		checkResponse    func(t *testing.T, w *httptest.ResponseRecorder, uploadDir string)
+	}{
+		{
+			name: "non-multipart body returns 400",
+			buildRequest: func(t *testing.T, tenantID string) *http.Request {
+				req := httptest.NewRequest(http.MethodPost, "/jobs/csv", bytes.NewBufferString("not multipart"))
+				req.Header.Set("Content-Type", "text/plain")
+				return req
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "missing file returns 400",
+			buildRequest: func(t *testing.T, tenantID string) *http.Request {
+				return buildUploadRequest(t, "/jobs/csv?tenant_id="+tenantID, false, "")
+			},
+			wantStatus:       http.StatusBadRequest,
+			wantBodyContains: "no file provided",
+		},
+		{
+			name: "missing tenant_id returns 400",
+			buildRequest: func(t *testing.T, tenantID string) *http.Request {
+				return buildUploadRequest(t, "/jobs/csv", true, "a,b\n1,2")
+			},
+			wantStatus:       http.StatusBadRequest,
+			wantBodyContains: "tenant_id is required",
+		},
+		{
+			name: "invalid tenant_id format returns 400",
+			buildRequest: func(t *testing.T, tenantID string) *http.Request {
+				return buildUploadRequest(t, "/jobs/csv?tenant_id=not-a-uuid", true, "a,b\n1,2")
+			},
+			wantStatus:       http.StatusBadRequest,
+			wantBodyContains: "invalid tenant_id format",
+		},
+		{
+			name: "valid upload creates job and saves file",
+			buildRequest: func(t *testing.T, tenantID string) *http.Request {
+				return buildUploadRequest(t, "/jobs/csv?tenant_id="+tenantID, true, "name,age\nJohn,25")
+			},
+			setupMock: func(repo *mocks.JobRepository, tenantID string) {
+				createdJob := &domain.Job{ID: 42, Status: domain.JobStatusPending}
+				repo.EXPECT().Create(mock.Anything, tenantID, domain.JobTypeCSVImport, mock.MatchedBy(func(cfg domain.CSVImportConfig) bool {
+					return cfg.Delimiter == "," && cfg.HasHeader
+				})).Return(createdJob, nil)
+			},
+			wantStatus: http.StatusAccepted,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder, uploadDir string) {
+				var resp CreateCSVJobResponse
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Equal(t, int64(42), resp.JobID)
+				require.Equal(t, string(domain.JobStatusPending), resp.Status)
 
-		req := httptest.NewRequest(http.MethodPost, "/jobs/csv", bytes.NewBufferString("not multipart"))
-		req.Header.Set("Content-Type", "text/plain")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+				// The file must have landed on disk under uploadDir.
+				entries, err := os.ReadDir(uploadDir)
+				require.NoError(t, err)
+				require.Len(t, entries, 1)
+				require.Equal(t, ".csv", filepath.Ext(entries[0].Name()))
+			},
+		},
+		{
+			name: "repository error returns 500",
+			buildRequest: func(t *testing.T, tenantID string) *http.Request {
+				return buildUploadRequest(t, "/jobs/csv?tenant_id="+tenantID, true, "a,b\n1,2")
+			},
+			setupMock: func(repo *mocks.JobRepository, tenantID string) {
+				repo.EXPECT().Create(mock.Anything, tenantID, domain.JobTypeCSVImport, mock.Anything).
+					Return(nil, errors.New("db down"))
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
 
-		require.Equal(t, http.StatusBadRequest, w.Code)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := mocks.NewJobRepository(t)
+			uploadDir := t.TempDir()
+			h := NewJobHandler(repo, uploadDir)
+			router := newTestRouter(h)
 
-	t.Run("missing file returns 400", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
+			tenantID := uuid.New().String()
+			if tt.setupMock != nil {
+				tt.setupMock(repo, tenantID)
+			}
 
-		uuidVal := uuid.New().String()
-		req := buildUploadRequest(t, "/jobs/csv?tenant_id="+uuidVal, false, "")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, tt.buildRequest(t, tenantID))
 
-		require.Equal(t, http.StatusBadRequest, w.Code)
-		require.Contains(t, w.Body.String(), "no file provided")
-	})
-
-	t.Run("missing tenant_id returns 400", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
-
-		req := buildUploadRequest(t, "/jobs/csv", true, "a,b\n1,2")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		require.Equal(t, http.StatusBadRequest, w.Code)
-		require.Contains(t, w.Body.String(), "tenant_id is required")
-	})
-
-	t.Run("invalid tenant_id format returns 400", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
-
-		req := buildUploadRequest(t, "/jobs/csv?tenant_id=not-a-uuid", true, "a,b\n1,2")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		require.Equal(t, http.StatusBadRequest, w.Code)
-		require.Contains(t, w.Body.String(), "invalid tenant_id format")
-	})
-
-	t.Run("valid upload creates job and saves file", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		uploadDir := t.TempDir()
-		h := NewJobHandler(repo, uploadDir)
-		router := newTestRouter(h)
-
-		tenantID := uuid.New().String()
-		createdJob := &domain.Job{ID: 42, Status: domain.JobStatusPending}
-		repo.EXPECT().Create(mock.Anything, tenantID, domain.JobTypeCSVImport, mock.MatchedBy(func(cfg domain.CSVImportConfig) bool {
-			return cfg.Delimiter == "," && cfg.HasHeader
-		})).Return(createdJob, nil)
-
-		req := buildUploadRequest(t, "/jobs/csv?tenant_id="+tenantID, true, "name,age\nJohn,25")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		require.Equal(t, http.StatusAccepted, w.Code)
-
-		var resp CreateCSVJobResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		require.Equal(t, int64(42), resp.JobID)
-		require.Equal(t, string(domain.JobStatusPending), resp.Status)
-
-		// The file must have landed on disk under uploadDir.
-		entries, err := os.ReadDir(uploadDir)
-		require.NoError(t, err)
-		require.Len(t, entries, 1)
-		require.Equal(t, ".csv", filepath.Ext(entries[0].Name()))
-	})
-
-	t.Run("repository error returns 500", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
-
-		tenantID := uuid.New().String()
-		repo.EXPECT().Create(mock.Anything, tenantID, domain.JobTypeCSVImport, mock.Anything).
-			Return(nil, errors.New("db down"))
-
-		req := buildUploadRequest(t, "/jobs/csv?tenant_id="+tenantID, true, "a,b\n1,2")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		require.Equal(t, http.StatusInternalServerError, w.Code)
-	})
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantBodyContains != "" {
+				require.Contains(t, w.Body.String(), tt.wantBodyContains)
+			}
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w, uploadDir)
+			}
+		})
+	}
 }
 
 func TestGetJob(t *testing.T) {
-	t.Run("non-numeric id returns 400", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
+	tests := []struct {
+		name          string
+		path          string
+		setupMock     func(repo *mocks.JobRepository)
+		wantStatus    int
+		checkResponse func(t *testing.T, w *httptest.ResponseRecorder)
+	}{
+		{
+			name:       "non-numeric id returns 400",
+			path:       "/jobs/not-an-id",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "repository error returns 404",
+			path: "/jobs/7",
+			setupMock: func(repo *mocks.JobRepository) {
+				repo.EXPECT().GetByID(mock.Anything, int64(7)).Return(nil, errors.New("not found"))
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "success parses config and result",
+			path: "/jobs/7",
+			setupMock: func(repo *mocks.JobRepository) {
+				job := &domain.Job{
+					ID:     7,
+					Status: domain.JobStatusCompleted,
+					Config: json.RawMessage(`{"file_path":"/tmp/x.csv","delimiter":",","has_header":true}`),
+					Result: json.RawMessage(`{"rows_processed":3,"rows_inserted":3}`),
+				}
+				repo.EXPECT().GetByID(mock.Anything, int64(7)).Return(job, nil)
+			},
+			wantStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp struct {
+					ID     int64                  `json:"id"`
+					Config domain.CSVImportConfig `json:"config"`
+					Result domain.CSVImportResult `json:"result"`
+				}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Equal(t, int64(7), resp.ID)
+				require.Equal(t, ",", resp.Config.Delimiter)
+				require.True(t, resp.Config.HasHeader)
+				require.Equal(t, 3, resp.Result.RowsProcessed)
+				require.Equal(t, 3, resp.Result.RowsInserted)
+			},
+		},
+	}
 
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/jobs/not-an-id", nil))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := mocks.NewJobRepository(t)
+			h := NewJobHandler(repo, t.TempDir())
+			router := newTestRouter(h)
 
-		require.Equal(t, http.StatusBadRequest, w.Code)
-	})
+			if tt.setupMock != nil {
+				tt.setupMock(repo)
+			}
 
-	t.Run("repository error returns 404", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, tt.path, nil))
 
-		repo.EXPECT().GetByID(mock.Anything, int64(7)).Return(nil, errors.New("not found"))
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/jobs/7", nil))
-
-		require.Equal(t, http.StatusNotFound, w.Code)
-	})
-
-	t.Run("success parses config and result", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
-
-		job := &domain.Job{
-			ID:     7,
-			Status: domain.JobStatusCompleted,
-			Config: json.RawMessage(`{"file_path":"/tmp/x.csv","delimiter":",","has_header":true}`),
-			Result: json.RawMessage(`{"rows_processed":3,"rows_inserted":3}`),
-		}
-		repo.EXPECT().GetByID(mock.Anything, int64(7)).Return(job, nil)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/jobs/7", nil))
-
-		require.Equal(t, http.StatusOK, w.Code)
-
-		var resp struct {
-			ID     int64                  `json:"id"`
-			Config domain.CSVImportConfig `json:"config"`
-			Result domain.CSVImportResult `json:"result"`
-		}
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		require.Equal(t, int64(7), resp.ID)
-		require.Equal(t, ",", resp.Config.Delimiter)
-		require.True(t, resp.Config.HasHeader)
-		require.Equal(t, 3, resp.Result.RowsProcessed)
-		require.Equal(t, 3, resp.Result.RowsInserted)
-	})
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+		})
+	}
 }
 
 func TestGetJobStats(t *testing.T) {
-	t.Run("success returns stats", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
+	tests := []struct {
+		name          string
+		setupMock     func(repo *mocks.JobRepository)
+		wantStatus    int
+		checkResponse func(t *testing.T, w *httptest.ResponseRecorder)
+	}{
+		{
+			name: "success returns stats",
+			setupMock: func(repo *mocks.JobRepository) {
+				stats := &domain.QueueStats{TotalPending: 2, TotalRunning: 1, ByType: map[domain.JobType]domain.JobStats{}}
+				repo.EXPECT().GetQueueStats(mock.Anything).Return(stats, nil)
+			},
+			wantStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				var resp domain.QueueStats
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+				require.Equal(t, 2, resp.TotalPending)
+				require.Equal(t, 1, resp.TotalRunning)
+			},
+		},
+		{
+			name: "repository error returns 500",
+			setupMock: func(repo *mocks.JobRepository) {
+				repo.EXPECT().GetQueueStats(mock.Anything).Return(nil, errors.New("boom"))
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
 
-		stats := &domain.QueueStats{TotalPending: 2, TotalRunning: 1, ByType: map[domain.JobType]domain.JobStats{}}
-		repo.EXPECT().GetQueueStats(mock.Anything).Return(stats, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := mocks.NewJobRepository(t)
+			h := NewJobHandler(repo, t.TempDir())
+			router := newTestRouter(h)
 
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/jobs/stats", nil))
+			tt.setupMock(repo)
 
-		require.Equal(t, http.StatusOK, w.Code)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/jobs/stats", nil))
 
-		var resp domain.QueueStats
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		require.Equal(t, 2, resp.TotalPending)
-		require.Equal(t, 1, resp.TotalRunning)
-	})
-
-	t.Run("repository error returns 500", func(t *testing.T) {
-		repo := mocks.NewJobRepository(t)
-		h := NewJobHandler(repo, t.TempDir())
-		router := newTestRouter(h)
-
-		repo.EXPECT().GetQueueStats(mock.Anything).Return(nil, errors.New("boom"))
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/jobs/stats", nil))
-
-		require.Equal(t, http.StatusInternalServerError, w.Code)
-	})
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, w)
+			}
+		})
+	}
 }
 
 func TestListJobs(t *testing.T) {
