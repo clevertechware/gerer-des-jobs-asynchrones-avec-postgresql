@@ -12,8 +12,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
-	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository"
 )
+
+// JobRepository defines the job persistence operations the worker needs
+type JobRepository interface {
+	// Dequeue retrieves and locks a batch of pending jobs for processing
+	// The jobs are automatically marked as RUNNING and their started_at timestamp is set
+	Dequeue(ctx context.Context, batchSize int) ([]*domain.Job, error)
+
+	// UpdateStatus updates the job status and related fields
+	UpdateStatus(ctx context.Context, id int64, status domain.JobStatus, result interface{}, errMsg *string, durationMs *int64) error
+
+	// UpdateToPending resets a job to PENDING status (for retries)
+	UpdateToPending(ctx context.Context, id int64, runAfter *string, errorMsg *string) error
+}
 
 // JobHandler is a function that processes a specific type of job
 type JobHandler func(ctx context.Context, config json.RawMessage) (json.RawMessage, error)
@@ -21,7 +33,7 @@ type JobHandler func(ctx context.Context, config json.RawMessage) (json.RawMessa
 // Worker processes jobs from the queue
 type Worker struct {
 	db           *pgxpool.Pool
-	repo         repository.JobRepository
+	repo         JobRepository
 	handlers     map[domain.JobType]JobHandler
 	workerID     uuid.UUID
 	batchSize    int
@@ -54,7 +66,7 @@ func WithConcurrency(n int) WorkerOption {
 }
 
 // NewWorker creates a new Worker
-func NewWorker(db *pgxpool.Pool, repo repository.JobRepository, opts ...WorkerOption) *Worker {
+func NewWorker(db *pgxpool.Pool, repo JobRepository, opts ...WorkerOption) *Worker {
 	w := &Worker{
 		db:           db,
 		repo:         repo,

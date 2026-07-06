@@ -6,19 +6,18 @@ import (
 	"fmt"
 
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
-	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-// JobRepository implements repository.JobRepository using PostgreSQL
+// JobRepository implements job persistence using PostgreSQL
 type JobRepository struct {
 	txManager *PGTxManager
 }
 
 // NewJobRepository creates a new JobRepository
-func NewJobRepository(txManager *PGTxManager) repository.JobRepository {
+func NewJobRepository(txManager *PGTxManager) *JobRepository {
 	return &JobRepository{txManager: txManager}
 }
 

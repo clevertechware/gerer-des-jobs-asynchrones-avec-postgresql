@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,17 +14,31 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
-	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository"
 )
+
+// JobRepository defines the job persistence operations the web handlers need
+type JobRepository interface {
+	// Create creates a new job and returns it with assigned ID
+	Create(ctx context.Context, tenantID string, jobType domain.JobType, config interface{}) (*domain.Job, error)
+
+	// GetByID retrieves a job by its ID
+	GetByID(ctx context.Context, id int64) (*domain.Job, error)
+
+	// GetQueueStats returns statistics about the job queue
+	GetQueueStats(ctx context.Context) (*domain.QueueStats, error)
+
+	// GetJobsByStatus returns jobs filtered by status
+	GetJobsByStatus(ctx context.Context, status domain.JobStatus, limit int) ([]*domain.Job, error)
+}
 
 // JobHandler handles HTTP requests for job management
 type JobHandler struct {
-	repo      repository.JobRepository
+	repo      JobRepository
 	uploadDir string
 }
 
 // NewJobHandler creates a new JobHandler
-func NewJobHandler(repo repository.JobRepository, uploadDir string) *JobHandler {
+func NewJobHandler(repo JobRepository, uploadDir string) *JobHandler {
 	return &JobHandler{
 		repo:      repo,
 		uploadDir: uploadDir,
