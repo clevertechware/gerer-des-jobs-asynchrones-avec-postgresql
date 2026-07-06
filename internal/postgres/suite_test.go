@@ -9,8 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-
-	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/testutil"
 )
 
 // PostgresSuite is the test suite for PostgreSQL repository tests
@@ -29,7 +27,7 @@ func TestPostgresSuite(t *testing.T) {
 // SetupSuite sets up the test suite with a PostgreSQL container
 func (s *PostgresSuite) SetupSuite() {
 	t := s.T()
-	pgpool, cleanup := testutil.SetupPostgresContainer(t)
+	pgpool, cleanup := SetupPostgresContainer(t)
 	s.pool = pgpool
 	s.logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	t.Cleanup(cleanup)

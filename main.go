@@ -11,15 +11,14 @@ import (
 	"syscall"
 	"time"
 
+	postgres2 "github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/postgres"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/config"
-	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/database"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/domain"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/web"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/handler/worker"
-	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/repository/postgres"
 	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/usecase"
 )
 
@@ -39,7 +38,7 @@ func main() {
 
 	// Run database migrations
 	log.Println("Running database migrations...")
-	if err := database.RunMigrations(cfg, "migrations"); err != nil {
+	if err := postgres2.RunMigrations(cfg, "migrations"); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
@@ -66,10 +65,10 @@ func main() {
 	log.Println("Database connection established")
 
 	// Create transaction manager
-	txManager := postgres.NewPGTxManager(slog.Default(), db)
+	txManager := postgres2.NewPGTxManager(slog.Default(), db)
 
 	// Create repositories
-	jobRepo := postgres.NewJobRepository(txManager)
+	jobRepo := postgres2.NewJobRepository(txManager)
 
 	// Create use cases
 	csvUsecase := usecase.NewCSVImportUsecase(cfg.UploadDir)

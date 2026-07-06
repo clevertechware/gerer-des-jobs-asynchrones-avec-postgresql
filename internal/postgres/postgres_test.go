@@ -1,4 +1,4 @@
-package testutil
+package postgres
 
 import (
 	"context"
@@ -11,14 +11,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/config"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/tracelog"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	postgresModule "github.com/testcontainers/testcontainers-go/modules/postgres"
-
-	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/config"
-	"github.com/clevertechware/gerer-ses-jobs-asynchrones-avec-postgresql/internal/database"
 )
 
 // testSQLLogger adapts stdlib log.Logger to tracelog.Logger interface
@@ -237,7 +236,7 @@ func runMigrations(_ context.Context, pool *pgxpool.Pool) error {
 		DBSSLMode:  "disable",
 	}
 
-	return database.RunMigrations(cfg, migrationsDir)
+	return RunMigrations(cfg, migrationsDir)
 }
 
 // findMigrationsDir locates the migrations directory starting from the current working
@@ -277,4 +276,54 @@ func CleanupJobsTable(t *testing.T) error {
 
 	_, err := pool.Exec(ctx, "TRUNCATE TABLE jobs RESTART IDENTITY CASCADE")
 	return err
+}
+
+// TestPostgresContainerSetup verifies that the PostgreSQL test container
+// can be started and a connection can be established.
+func (s *PostgresSuite) TestPostgresContainerSetup() {
+	t := s.T()
+
+	ctx := t.Context()
+
+	// Verify connection
+	err := s.pool.Ping(ctx)
+	require.NoError(t, err, "Failed to ping database")
+
+	// Test simple query to verify PostgreSQL is working
+	var version string
+	err = s.pool.QueryRow(ctx, "SELECT version()").Scan(&version)
+	require.NoError(t, err, "Failed to query PostgreSQL version")
+
+	t.Logf("PostgreSQL version: %s", version)
+	assert.Contains(t, version, "PostgreSQL", "Expected PostgreSQL version string")
+}
+
+// TestMigrationsRan verifies that migrations have been executed
+// by checking if the jobs table exists.
+func (s *PostgresSuite) TestMigrationsRan() {
+	t := s.T()
+
+	ctx := t.Context()
+
+	// Check if jobs table exists
+	var tableExists bool
+	query := `
+		SELECT EXISTS (
+			SELECT FROM information_schema.tables 
+			WHERE table_schema = 'public' 
+			AND table_name = 'jobs'
+		)
+	`
+	err := s.pool.QueryRow(ctx, query).Scan(&tableExists)
+	require.NoError(t, err, "Failed to check if jobs table exists")
+	assert.True(t, tableExists, "Jobs table should exist after migrations")
+}
+
+// TestBeginTx verifies that transactions can be started
+func (s *PostgresSuite) TestBeginTx() {
+	t := s.T()
+
+	// This will automatically rollback via t.Cleanup
+	tx := BeginTx(t)
+	assert.NotNil(t, tx, "Expected transaction to be created")
 }
