@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -184,7 +183,7 @@ func TestRequeueJobBackoff(t *testing.T) {
 		w := NewWorker(nil, repo)
 
 		repo.EXPECT().UpdateToPending(mock.Anything, int64(10), mock.Anything, mock.Anything).
-			Return(errors.New("update failed"))
+			Return(assert.AnError)
 		repo.EXPECT().UpdateStatus(mock.Anything, int64(10), domain.JobStatusFailed, nil,
 			mock.MatchedBy(func(s *string) bool { return s != nil && *s == assert.AnError.Error() }), mock.Anything).
 			Return(nil)
